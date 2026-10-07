@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.git
+.github
+.husky
+.env
+.env.*
+!.env.example
+*.log
+test
+docs
+load-tests
+k8s
+*.md
