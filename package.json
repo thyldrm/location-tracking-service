@@ -45,6 +45,7 @@
     "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "swagger-ui-dist": "^5.33.1",
     "typeorm": "^1.1.2",
     "uuid": "^14.0.2",
     "zod": "^4.6.5"
@@ -81,6 +82,7 @@
     ]
   },
   "allowScripts": {
+    "@scarf/scarf": false,
     "cpu-features": false,
     "protobufjs": false,
     "ssh2": false,
