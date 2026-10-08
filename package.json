@@ -36,7 +36,7 @@
     "@nestjs/typeorm": "^12.0.2",
     "fastify": "^5.12.5",
     "flatbush": "^4.6.2",
-    "ioredis": "^5.11.1",
+    "ioredis": "^6.0.0",
     "nestjs-cls": "^7.0.1",
     "nestjs-pino": "^5.3.1",
     "pg": "^8.23.1",
