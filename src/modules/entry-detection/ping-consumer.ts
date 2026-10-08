@@ -8,26 +8,16 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Env } from '../../core/config/env.schema.js';
+import { backoffDelayMs, withJitter } from '../../core/foundation/backoff.js';
 import { createKafka } from '../../core/messaging/kafka-client.js';
+import { headersAsText, startConsumer } from '../../core/messaging/kafka-consumer.js';
 import { Topics } from '../../core/messaging/topics.js';
 import { AreaIndexService } from '../area-index/area-index.service.js';
 import { type ConsumedMessage, PingBatchHandler } from './ping-batch-handler.js';
 
-const RECONNECT_DELAY_MS = 5_000;
-const BACKOFF_BASE_MS = 500;
-const BACKOFF_MAX_MS = 30_000;
+const BACKOFF = { baseMs: 500, maxMs: 30_000 };
 /** Upper bound of messages handed to one batch handler call. */
 const MAX_BATCH_SIZE = 500;
-
-function headersAsText(headers: KafkaJS.IHeaders | undefined): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headers ?? {})) {
-    if (value === undefined) continue;
-    const first = Array.isArray(value) ? value[0] : value;
-    if (first !== undefined) result[name] = first.toString();
-  }
-  return result;
-}
 
 /**
  * Consumes `location.pings.v1` as a member of the `entry-detector` group: Kafka spreads the topic's
@@ -73,15 +63,15 @@ export class PingConsumer implements OnApplicationBootstrap, OnApplicationShutdo
 
   private async start(): Promise<void> {
     await this.areaIndex.whenReady(this.stop.signal);
-    const kafka = createKafka(
-      {
-        KAFKA_BROKERS: this.config.get('KAFKA_BROKERS', { infer: true }),
-        SERVICE_NAME: this.config.get('SERVICE_NAME', { infer: true }),
-      },
-      this.logger,
-    );
-    while (!this.stop.signal.aborted) {
-      const consumer = kafka.consumer({
+    const started = await startConsumer({
+      kafka: createKafka(
+        {
+          KAFKA_BROKERS: this.config.get('KAFKA_BROKERS', { infer: true }),
+          SERVICE_NAME: this.config.get('SERVICE_NAME', { infer: true }),
+        },
+        this.logger,
+      ),
+      config: {
         kafkaJS: {
           groupId: this.config.get('KAFKA_CONSUMER_GROUP', { infer: true }),
           // A new group starts at the oldest retained ping, so pings accepted before the first worker
@@ -91,40 +81,35 @@ export class PingConsumer implements OnApplicationBootstrap, OnApplicationShutdo
         },
         'js.consumer.max.batch.size': MAX_BATCH_SIZE,
         'socket.connection.setup.timeout.ms': 3_000,
-      });
-      this.consumer = consumer;
-      try {
-        await consumer.connect();
-        await consumer.subscribe({ topics: [Topics.LocationPings] });
-        await consumer.run({
-          partitionsConsumedConcurrently: this.config.get('WORKER_PARTITION_CONCURRENCY', {
-            infer: true,
-          }),
-          eachBatch: async (payload) => {
-            const { batch } = payload;
-            if (payload.isStale()) return; // the partition was revoked meanwhile; its new owner replays it
-            await this.handleBatch(
-              batch.messages.map((message) => ({
-                topic: batch.topic,
-                partition: batch.partition,
-                offset: message.offset,
-                key: message.key,
-                value: message.value,
-                headers: headersAsText(message.headers),
-              })),
-            );
-          },
-        });
-        this.logger.info('Ping consumer started');
-        return;
-      } catch (error) {
-        if (this.stop.signal.aborted) return;
-        this.logger.error({ err: error }, 'Ping consumer could not start; retrying');
-        await consumer.disconnect().catch(() => undefined);
-        await sleep(RECONNECT_DELAY_MS, undefined, { signal: this.stop.signal }).catch(
-          () => undefined,
-        );
-      }
+      },
+      topics: [Topics.LocationPings],
+      run: {
+        partitionsConsumedConcurrently: this.config.get('WORKER_PARTITION_CONCURRENCY', {
+          infer: true,
+        }),
+        eachBatch: async (payload) => {
+          const { batch } = payload;
+          if (payload.isStale()) return; // the partition was revoked meanwhile; its new owner replays it
+          await this.handleBatch(
+            batch.messages.map((message) => ({
+              topic: batch.topic,
+              partition: batch.partition,
+              offset: message.offset,
+              key: message.key,
+              value: message.value,
+              headers: headersAsText(message.headers),
+            })),
+          );
+        },
+      },
+      signal: this.stop.signal,
+      logger: this.logger,
+      onCreated: (consumer) => {
+        this.consumer = consumer;
+      },
+    });
+    if (started) {
+      this.logger.info('Ping consumer started');
     }
   }
 
@@ -134,16 +119,13 @@ export class PingConsumer implements OnApplicationBootstrap, OnApplicationShutdo
       this.consecutiveFailures = 0;
     } catch (error) {
       this.consecutiveFailures++;
-      const delayMs = Math.min(
-        BACKOFF_MAX_MS,
-        BACKOFF_BASE_MS * 2 ** (this.consecutiveFailures - 1),
-      );
+      const delayMs = backoffDelayMs(this.consecutiveFailures, BACKOFF);
       this.logger.error(
         { err: error, consecutiveFailures: this.consecutiveFailures, retryInMs: delayMs },
         'Ping batch failed; it will be redelivered',
       );
       // Jitter spreads the retries of many instances, so a recovering database is not hit all at once.
-      await sleep(delayMs * (0.5 + Math.random() / 2), undefined, {
+      await sleep(withJitter(delayMs), undefined, {
         signal: this.stop.signal,
       }).catch(() => undefined);
       // Rethrowing makes the client seek back to the first unprocessed message of the batch.
