@@ -31,6 +31,45 @@ curl http://localhost:3000/metrics
 # API documentation (Swagger UI): http://localhost:3000/docs
 ```
 
+### Try it
+
+Open `http://localhost:3000/docs`, choose **Authorize** and enter the development key
+`local-development-api-key-change-me-0123456789`. Then:
+
+1. `POST /areas` with an area:
+
+   ```json
+   {
+     "name": "Kadikoy Pier",
+     "geometry": {
+       "type": "Polygon",
+       "coordinates": [
+         [
+           [29.02, 40.99],
+           [29.04, 40.99],
+           [29.04, 41.0],
+           [29.02, 41.0],
+           [29.02, 40.99]
+         ]
+       ]
+     }
+   }
+   ```
+
+2. `POST /locations` with a ping inside it; the timestamp is the current time (it may be at most 60 s ahead and 24 h
+   old):
+
+   ```json
+   {
+     "userId": "demo-user",
+     "latitude": 40.995,
+     "longitude": 29.03,
+     "timestamp": "2026-10-09T08:00:00Z"
+   }
+   ```
+
+3. `GET /logs?userId=demo-user`: the entry appears within a second. A ping outside the area closes it (`exitedAt`).
+
 ## Scripts
 
 | Command                                              | Purpose                                                                    |
@@ -44,37 +83,62 @@ curl http://localhost:3000/metrics
 | `npm run format`                                     | Format with Prettier                                                       |
 | `docker compose run --rm k6 run /load/ingest.js`     | Load test of ingestion against the compose stack ([load/](load/README.md)) |
 
+## Repository layout
+
+| Path                           | Contents                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `src/main.ts`, `src/worker.ts` | Entrypoints of the two process roles (one image)                                            |
+| `src/core/`                    | Shared infrastructure: configuration, database, Kafka, Redis, logging, metrics, errors      |
+| `src/modules/`                 | Features: areas, locations, area index, entry detection, logs, outbox, health, docs, ...    |
+| `test/`                        | Integration and e2e tests (Testcontainers); unit tests live next to the code as `*.spec.ts` |
+| `load/`                        | k6 load tests ([load/README.md](load/README.md))                                            |
+| `deploy/k8s/`                  | Kubernetes manifests ([deploy/k8s/README.md](deploy/k8s/README.md))                         |
+| `docs/adr/`                    | Architecture decision records                                                               |
+
+## Deployment
+
+The image runs both roles; Kubernetes manifests (Kustomize) are in [deploy/k8s/](deploy/k8s/README.md), with an
+example production overlay and a local overlay that runs the whole system on [kind](https://kind.sigs.k8s.io/):
+
+```bash
+kubectl apply -k deploy/k8s/overlays/local
+```
+
 ## Technical choices
 
-| Concern             | Choice                                                        | Why                                                                                                                                                                                                                                              |
-| ------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Service shape       | One repository and image, two process roles (API and worker)  | One bounded context and schema, but ingestion and processing scale differently. The database stays off the ingestion path. ([ADR 0001](docs/adr/0001-single-service-with-two-process-roles.md))                                                  |
-| Framework / runtime | NestJS 12 (ESM) on Node.js 24 LTS, Fastify adapter            | Required framework; Fastify has lower per-request overhead on a high-RPS ingestion endpoint. ([ADR 0002](docs/adr/0002-runtime-and-tooling-baseline.md))                                                                                         |
-| Database            | PostgreSQL 18 + PostGIS 3.6                                   | Native polygon type, validity checks (`ST_IsValid`) and GiST spatial indexes.                                                                                                                                                                    |
-| Polygon model       | GeoJSON `Polygon` in, `geometry(Polygon, 4326)` stored        | GeoJSON is the de-facto exchange format; SRID 4326 matches GPS coordinates; planar checks are accurate at city scale.                                                                                                                            |
-| ORM                 | TypeORM                                                       | Maps PostGIS geometry columns natively (Prisma needs raw SQL for them) and gives explicit transaction control.                                                                                                                                   |
-| Kafka producer      | Idempotent, `acks=all`, 5 ms linger, bounded queue            | `202` means the ping is on every in-sync replica. A full queue or a broker timeout answers `503` instead of growing memory. The API starts and serves other endpoints while Kafka is down. ([ADR 0006](docs/adr/0006-ingestion-path.md))         |
-| Message broker      | Apache Kafka                                                  | Pings keyed by `userId` stay ordered per user, consumers scale through consumer groups, and retained messages can be replayed. RabbitMQ and BullMQ cannot keep per-user ordering with competing consumers as easily.                             |
-| Rate limiting       | Fixed-window counter per user in Redis, fails open            | One atomic Lua script per ping, shared by all API instances. A Redis outage must not stop ingestion, so requests are allowed while Redis is unavailable. ([ADR 0006](docs/adr/0006-ingestion-path.md))                                           |
-| Cache               | Redis                                                         | Hot per-user presence state and per-user rate limits. It is never the source of truth: losing Redis slows the service down but loses no data.                                                                                                    |
-| Worker failures     | Back-off for transient errors, dead letter topic for the rest | A database outage pauses processing (lag grows, nothing is lost); a poison message never blocks a partition. ([ADR 0007](docs/adr/0007-worker-processing.md))                                                                                    |
-| Hot-path geometry   | In-memory R-tree (`flatbush`) + exact point-in-polygon        | Areas are few and change rarely, pings are many: point-in-polygon runs without a database round trip. PostgreSQL remains the source of truth.                                                                                                    |
-| Reliable events     | Transactional outbox                                          | Entries and their `area.entered` events are committed atomically, avoiding the database-plus-broker dual-write problem.                                                                                                                          |
-| Outbox relay        | One relay at a time, transaction-level advisory lock per pass | No coordinator to run: a crashed relay is replaced at once, a frozen one within 10 s, and the events of one user are never published out of order. ([ADR 0008](docs/adr/0008-outbox-relay-and-area-index-updates.md))                            |
-| New areas           | `area.created` events to every worker + periodic reload       | A new area is detected within a second, without a database read per worker; the reload repairs a missed event. ([ADR 0008](docs/adr/0008-outbox-relay-and-area-index-updates.md))                                                                |
-| Idempotency         | Natural keys (`user_area_presence` primary key)               | Kafka delivers at least once; duplicates are absorbed without a per-message inbox write.                                                                                                                                                         |
-| Safe client retries | `Idempotency-Key` on `POST /areas`                            | A client that lost the response can retry and gets the original area back instead of a `409` or a duplicate. The key is claimed in the same transaction as the area. ([ADR 0005](docs/adr/0005-areas-api.md))                                    |
-| Log queries         | One index per access path, cursor bound to its filters        | `GET /logs` reads `limit + 1` index entries whatever the table size (0.06–0.24 ms on one million rows), and a cursor replayed with other filters is rejected instead of returning a wrong page. ([ADR 0009](docs/adr/0009-logs-query-design.md)) |
-| Request validation  | Zod schemas in a NestJS pipe                                  | One library for configuration and payloads; handlers only ever receive parsed, typed input, and every failure lists the offending fields.                                                                                                        |
-| Pagination          | Keyset (cursor) on `(created_at, id)`                         | Constant cost per page served straight from an index, and no skipped or repeated rows when data changes between pages, unlike `OFFSET`.                                                                                                          |
-| Metrics             | Prometheus (`prom-client`), one registry per process          | Latency per route, ingestion, freshness (ping accepted → processed), entries, dead letters, outbox backlog and age. Labels never carry ids. ([ADR 0010](docs/adr/0010-operability.md))                                                           |
-| Readiness           | Process state only (starting, draining)                       | A shared dependency outage hits every instance; failing readiness everywhere would also take down the endpoints that do not need it. ([ADR 0010](docs/adr/0010-operability.md))                                                                  |
-| Kafka outage        | Circuit breaker on publishing pings                           | After 5 timeouts, `503` within milliseconds instead of a 3 s wait per request; one trial request every 5 s. ([ADR 0010](docs/adr/0010-operability.md))                                                                                           |
-| Shutdown            | Drain (readiness 503, keep serving 5 s), then close, 25 s cap | Rolling deployments drop no request; consumers commit offsets before the producer and pools close. ([ADR 0010](docs/adr/0010-operability.md))                                                                                                    |
-| Capacity            | ~1,000 pings/s per API instance (one core); scale out         | Measured with a k6 load test: one instance meets the latency target up to ~1,100 pings/s, two instances twice that; one worker processes ~10,000 pings/s. ([ADR 0011](docs/adr/0011-load-test-and-capacity.md))                                  |
-| Logging             | Structured JSON to stdout (pino)                              | 12-factor: the platform collects and ships logs; the service writes no log files. ([ADR 0004](docs/adr/0004-errors-correlation-and-logging.md))                                                                                                  |
-| Errors              | RFC 9457 Problem Details from one global filter               | Standard, machine-readable error types; internal details are logged, never returned.                                                                                                                                                             |
-| Request correlation | `x-request-id` + AsyncLocalStorage                            | One id follows a request through logs, Kafka headers and outbox events, without request-scoped providers.                                                                                                                                        |
+| Concern             | Choice                                                                    | Why                                                                                                                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Service shape       | One repository and image, two process roles (API and worker)              | One bounded context and schema, but ingestion and processing scale differently. The database stays off the ingestion path. ([ADR 0001](docs/adr/0001-single-service-with-two-process-roles.md))                                                  |
+| Framework / runtime | NestJS 12 (ESM) on Node.js 24 LTS, Fastify adapter                        | Required framework; Fastify has lower per-request overhead on a high-RPS ingestion endpoint. ([ADR 0002](docs/adr/0002-runtime-and-tooling-baseline.md))                                                                                         |
+| Database            | PostgreSQL 18 + PostGIS 3.6                                               | Native polygon type, validity checks (`ST_IsValid`) and GiST spatial indexes.                                                                                                                                                                    |
+| Polygon model       | GeoJSON `Polygon` in, `geometry(Polygon, 4326)` stored                    | GeoJSON is the de-facto exchange format; SRID 4326 matches GPS coordinates; planar checks are accurate at city scale.                                                                                                                            |
+| ORM                 | TypeORM                                                                   | Maps PostGIS geometry columns natively (Prisma needs raw SQL for them) and gives explicit transaction control.                                                                                                                                   |
+| Kafka producer      | Idempotent, `acks=all`, 5 ms linger, bounded queue                        | `202` means the ping is on every in-sync replica. A full queue or a broker timeout answers `503` instead of growing memory. The API starts and serves other endpoints while Kafka is down. ([ADR 0006](docs/adr/0006-ingestion-path.md))         |
+| Message broker      | Apache Kafka                                                              | Pings keyed by `userId` stay ordered per user, consumers scale through consumer groups, and retained messages can be replayed. RabbitMQ and BullMQ cannot keep per-user ordering with competing consumers as easily.                             |
+| Rate limiting       | Fixed-window counter per user in Redis, fails open                        | One atomic Lua script per ping, shared by all API instances. A Redis outage must not stop ingestion, so requests are allowed while Redis is unavailable. ([ADR 0006](docs/adr/0006-ingestion-path.md))                                           |
+| Cache               | Redis                                                                     | Hot per-user presence state and per-user rate limits. It is never the source of truth: losing Redis slows the service down but loses no data.                                                                                                    |
+| Worker failures     | Back-off for transient errors, dead letter topic for the rest             | A database outage pauses processing (lag grows, nothing is lost); a poison message never blocks a partition. ([ADR 0007](docs/adr/0007-worker-processing.md))                                                                                    |
+| Hot-path geometry   | In-memory R-tree (`flatbush`) + exact point-in-polygon                    | Areas are few and change rarely, pings are many: point-in-polygon runs without a database round trip. PostgreSQL remains the source of truth.                                                                                                    |
+| Reliable events     | Transactional outbox                                                      | Entries and their `area.entered` events are committed atomically, avoiding the database-plus-broker dual-write problem.                                                                                                                          |
+| Outbox relay        | One relay at a time, transaction-level advisory lock per pass             | No coordinator to run: a crashed relay is replaced at once, a frozen one within 10 s, and the events of one user are never published out of order. ([ADR 0008](docs/adr/0008-outbox-relay-and-area-index-updates.md))                            |
+| New areas           | `area.created` events to every worker + periodic reload                   | A new area is detected within a second, without a database read per worker; the reload repairs a missed event. ([ADR 0008](docs/adr/0008-outbox-relay-and-area-index-updates.md))                                                                |
+| Idempotency         | Natural keys (`user_area_presence` primary key)                           | Kafka delivers at least once; duplicates are absorbed without a per-message inbox write.                                                                                                                                                         |
+| Safe client retries | `Idempotency-Key` on `POST /areas`                                        | A client that lost the response can retry and gets the original area back instead of a `409` or a duplicate. The key is claimed in the same transaction as the area. ([ADR 0005](docs/adr/0005-areas-api.md))                                    |
+| Log queries         | One index per access path, cursor bound to its filters                    | `GET /logs` reads `limit + 1` index entries whatever the table size (0.06–0.24 ms on one million rows), and a cursor replayed with other filters is rejected instead of returning a wrong page. ([ADR 0009](docs/adr/0009-logs-query-design.md)) |
+| Request validation  | Zod schemas in a NestJS pipe                                              | One library for configuration and payloads; handlers only ever receive parsed, typed input, and every failure lists the offending fields.                                                                                                        |
+| Pagination          | Keyset (cursor) on `(created_at, id)`                                     | Constant cost per page served straight from an index, and no skipped or repeated rows when data changes between pages, unlike `OFFSET`.                                                                                                          |
+| Metrics             | Prometheus (`prom-client`), one registry per process                      | Latency per route, ingestion, freshness (ping accepted → processed), entries, dead letters, outbox backlog and age. Labels never carry ids. ([ADR 0010](docs/adr/0010-operability.md))                                                           |
+| Readiness           | Process state only (starting, draining)                                   | A shared dependency outage hits every instance; failing readiness everywhere would also take down the endpoints that do not need it. ([ADR 0010](docs/adr/0010-operability.md))                                                                  |
+| Kafka outage        | Circuit breaker on publishing pings                                       | After 5 timeouts, `503` within milliseconds instead of a 3 s wait per request; one trial request every 5 s. ([ADR 0010](docs/adr/0010-operability.md))                                                                                           |
+| Shutdown            | Drain (readiness 503, keep serving 5 s), then close, 25 s cap             | Rolling deployments drop no request; consumers commit offsets before the producer and pools close. ([ADR 0010](docs/adr/0010-operability.md))                                                                                                    |
+| Capacity            | ~1,000 pings/s per API instance (one core); scale out                     | Measured with a k6 load test: one instance meets the latency target up to ~1,100 pings/s, two instances twice that; one worker processes ~10,000 pings/s. ([ADR 0011](docs/adr/0011-load-test-and-capacity.md))                                  |
+| Deployment          | Kubernetes with Kustomize (base + overlays)                               | API autoscaled on CPU (HPA), worker on consumer lag (KEDA), PodDisruptionBudgets, migrations as a Job before rollout, non-root read-only pods. Verified on a kind cluster. ([ADR 0012](docs/adr/0012-kubernetes-deployment.md))                  |
+| Startup             | Processes start without PostgreSQL and connect in the background          | Ingestion needs only Kafka: an API pod rescheduled during a database outage still accepts pings. ([ADR 0012](docs/adr/0012-kubernetes-deployment.md))                                                                                            |
+| CI                  | GitHub Actions: checks, Testcontainers suite, commitlint, kind deployment | Every pull request is linted, tested against real PostgreSQL/Kafka/Redis and deployed to a Kubernetes cluster with a smoke test. ([ADR 0012](docs/adr/0012-kubernetes-deployment.md))                                                            |
+| API documentation   | OpenAPI 3.1 generated from the Zod schemas; Swagger UI at `/docs`         | No second description to drift: a contract test checks every route and real responses against the document. ([ADR 0013](docs/adr/0013-openapi-from-validation-schemas.md))                                                                       |
+| Logging             | Structured JSON to stdout (pino)                                          | 12-factor: the platform collects and ships logs; the service writes no log files. ([ADR 0004](docs/adr/0004-errors-correlation-and-logging.md))                                                                                                  |
+| Errors              | RFC 9457 Problem Details from one global filter                           | Standard, machine-readable error types; internal details are logged, never returned.                                                                                                                                                             |
+| Request correlation | `x-request-id` + AsyncLocalStorage                                        | One id follows a request through logs, Kafka headers and outbox events, without request-scoped providers.                                                                                                                                        |
 
 ## Assumptions
 
@@ -115,7 +179,10 @@ These matter in production, but this implementation leaves them out on purpose:
 - [SPEC.md](SPEC.md) — behaviour, API and messaging contracts, data model, failure modes
 - [docs/adr/](docs/adr/) — architecture decision records
 - [load/](load/README.md) — load tests and how to read their results
+- [deploy/k8s/](deploy/k8s/README.md) — Kubernetes deployment, local cluster walkthrough
+- API reference — `GET /docs` on a running instance (OpenAPI 3.1 at `/docs/openapi.json`)
 
 ## Status
 
-Under active development. Milestones are tracked in [SPEC.md §13](SPEC.md#13-milestones).
+v1 is complete: every milestone in [SPEC.md §13](SPEC.md#13-milestones) is done. The candidates for a next version
+are listed under [Out of scope](#out-of-scope) and in the "Not included" sections of the ADRs.

@@ -3,7 +3,7 @@
 This document is the single source of truth for the behaviour of the service.
 Code, tests and the README must agree with it. When behaviour changes, this file changes first.
 
-- **Status:** Draft v1 (implementation in progress, see [§13 Milestones](#13-milestones))
+- **Status:** v1 (every milestone in [§13](#13-milestones) is done)
 - **Owner:** Location Tracking Service team
 
 ---
@@ -79,25 +79,29 @@ These are deliberate assumptions made where the case is silent. Each is listed i
 
 One repository, one container image, two entrypoints:
 
-| Role   | Entrypoint       | Responsibilities                                                                        | Scaling                                                                 |
-| ------ | ---------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| API    | `dist/main.js`   | HTTP endpoints, validation, rate limiting, Kafka producer                               | Stateless, scale on CPU / RPS                                           |
-| Worker | `dist/worker.js` | Ping consumer, entry detection, outbox relay, area index refresh, health & metrics HTTP | Up to the partition count of `location.pings.v1`; scale on consumer lag |
+| Role            | Entrypoint                 | Responsibilities                                                                        | Scaling (ADR 0012)                                                   |
+| --------------- | -------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| API             | `dist/main.js`             | HTTP endpoints, validation, rate limiting, Kafka producer                               | Stateless; HPA on CPU (65 % of one core per pod), 3–30 pods          |
+| Worker          | `dist/worker.js`           | Ping consumer, entry detection, outbox relay, area index refresh, health & metrics HTTP | KEDA on the lag of `entry-detector`, 3–24 pods (the partition count) |
+| Migrations      | `dist/migrate.js run`      | Applies pending migrations (advisory lock)                                              | Job, run by the pipeline before a rollout                            |
+| Topic provision | `dist/provision-topics.js` | Creates missing Kafka topics                                                            | Job, run by the pipeline before a rollout                            |
 
 ### 4.2 Technology choices (summary — rationale in `docs/adr/`)
 
-| Concern                  | Choice                                                           |
-| ------------------------ | ---------------------------------------------------------------- |
-| Runtime / framework      | Node.js 24 LTS, NestJS 12 (ESM), TypeScript 6, Fastify adapter   |
-| Database                 | PostgreSQL 18 + PostGIS 3.6                                      |
-| ORM                      | TypeORM (native PostGIS geometry mapping; explicit transactions) |
-| Message broker           | Apache Kafka 4 (KRaft) via `@confluentinc/kafka-javascript`      |
-| Cache / rate limit       | Redis 8 via `ioredis`                                            |
-| Spatial index (hot path) | `flatbush` R-tree + exact point-in-polygon in memory             |
-| Validation               | Zod (Standard Schema) for config and request payloads            |
-| Logging                  | `pino` structured JSON to stdout                                 |
-| Metrics                  | Prometheus (`prom-client`)                                       |
-| Tests                    | Vitest, Testcontainers                                           |
+| Concern                  | Choice                                                              |
+| ------------------------ | ------------------------------------------------------------------- |
+| Runtime / framework      | Node.js 24 LTS, NestJS 12 (ESM), TypeScript 6, Fastify adapter      |
+| Database                 | PostgreSQL 18 + PostGIS 3.6                                         |
+| ORM                      | TypeORM (native PostGIS geometry mapping; explicit transactions)    |
+| Message broker           | Apache Kafka 4 (KRaft) via `@confluentinc/kafka-javascript`         |
+| Cache / rate limit       | Redis 8 via `ioredis`                                               |
+| Spatial index (hot path) | `flatbush` R-tree + exact point-in-polygon in memory                |
+| Validation               | Zod (Standard Schema) for config and request payloads               |
+| Logging                  | `pino` structured JSON to stdout                                    |
+| Metrics                  | Prometheus (`prom-client`)                                          |
+| Tests                    | Vitest, Testcontainers, k6 (load)                                   |
+| API documentation        | OpenAPI 3.1 generated from the Zod schemas, Swagger UI              |
+| Deployment               | Kubernetes (Kustomize), HPA (API) and KEDA (worker); GitHub Actions |
 
 ## 5. HTTP API
 
@@ -662,16 +666,16 @@ Housekeeping (worker role), at startup and every `HOUSEKEEPING_INTERVAL_MS` (def
 
 ## 13. Milestones
 
-| #   | Milestone                                                         | Status  |
-| --- | ----------------------------------------------------------------- | ------- |
-| 0   | Repository skeleton, tooling, config validation, Docker Compose   | done    |
-| 1   | Database schema and migrations                                    | done    |
-| 2   | Error handling, correlation id, structured logging, API key guard | done    |
-| 3   | Areas API + outbox writer + idempotency keys                      | done    |
-| 4   | Kafka module + `POST /locations` + rate limiting                  | done    |
-| 5   | Worker: area index, entry detection, retries, DLQ                 | done    |
-| 6   | Outbox relay + area index refresh                                 | done    |
-| 7   | `GET /logs`                                                       | done    |
-| 8   | Health, metrics, graceful shutdown                                | done    |
-| 9   | Integration / e2e / load tests                                    | done    |
-| 10  | README, ADRs, CI, Kubernetes manifests                            | planned |
+| #   | Milestone                                                         | Status |
+| --- | ----------------------------------------------------------------- | ------ |
+| 0   | Repository skeleton, tooling, config validation, Docker Compose   | done   |
+| 1   | Database schema and migrations                                    | done   |
+| 2   | Error handling, correlation id, structured logging, API key guard | done   |
+| 3   | Areas API + outbox writer + idempotency keys                      | done   |
+| 4   | Kafka module + `POST /locations` + rate limiting                  | done   |
+| 5   | Worker: area index, entry detection, retries, DLQ                 | done   |
+| 6   | Outbox relay + area index refresh                                 | done   |
+| 7   | `GET /logs`                                                       | done   |
+| 8   | Health, metrics, graceful shutdown                                | done   |
+| 9   | Integration / e2e / load tests                                    | done   |
+| 10  | README, ADRs, CI, Kubernetes manifests                            | done   |
