@@ -64,6 +64,17 @@ describe('RedisRateLimiter (integration)', () => {
     expect(await redis.pttl(`rate-limit:${key}`)).toBeLessThanOrEqual(700);
   });
 
+  it('keeps counting after Redis lost its script cache (e.g. a restart)', async () => {
+    const limiter = new RedisRateLimiter(redis, clock, silentLogger, new Metrics('test'));
+    const key = `test:${randomUUID()}`;
+    const policy = { limit: 1, windowMs: 2_000 };
+
+    await limiter.consume(key, policy);
+    await redis.script('FLUSH');
+
+    expect((await limiter.consume(key, policy)).allowed).toBe(false);
+  });
+
   it('fails open when Redis is unreachable', async () => {
     const unreachable = new Redis('redis://127.0.0.1:1', {
       enableOfflineQueue: false,
