@@ -139,6 +139,13 @@ describe('resolveProblem', () => {
     });
   });
 
+  it('answers a lost database connection with a retryable 503', () => {
+    const { problem, headers } = resolveProblem(new Error('Connection terminated unexpectedly'));
+
+    expect(problem.status).toBe(503);
+    expect(headers).toEqual({ 'retry-after': '1' });
+  });
+
   it('hides the details of unexpected errors', () => {
     const { problem, expected } = resolveProblem(new TypeError("Cannot read 'x' of undefined"));
 

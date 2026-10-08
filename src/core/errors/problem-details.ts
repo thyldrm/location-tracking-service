@@ -2,6 +2,7 @@ import { STATUS_CODES } from 'node:http';
 import { HttpException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { AppError } from './app-errors.js';
+import { isTransientError } from './transient-errors.js';
 
 export const PROBLEM_CONTENT_TYPE = 'application/problem+json';
 
@@ -40,29 +41,6 @@ const INTERNAL_ERROR: ResolvedProblem = {
   headers: {},
   expected: false,
 };
-
-/** PostgreSQL SQLSTATE codes that mean "the database is unavailable or overloaded, try again". */
-const TRANSIENT_DATABASE_CODES = new Set([
-  '40001', // serialization_failure
-  '40P01', // deadlock_detected
-  '53300', // too_many_connections
-  '57014', // query_canceled (statement_timeout)
-  '57P01', // admin_shutdown
-  '57P03', // cannot_connect_now
-  '08000', // connection_exception
-  '08001', // sqlclient_unable_to_establish_sqlconnection
-  '08003', // connection_does_not_exist
-  '08006', // connection_failure
-]);
-
-/** Node.js socket error codes raised when a dependency cannot be reached. */
-const NETWORK_ERROR_CODES = new Set([
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'ETIMEDOUT',
-  'ENOTFOUND',
-  'EPIPE',
-]);
 
 function problem(
   slug: string,
@@ -117,11 +95,7 @@ function fromHttpException(exception: HttpException): ResolvedProblem {
  * (for example a duplicate area name) into specific AppErrors. This is the safety net.
  */
 function fromDatabaseError(exception: QueryFailedError): ResolvedProblem {
-  const code = errorCode(exception.driverError);
-  if (code && TRANSIENT_DATABASE_CODES.has(code)) {
-    return serviceUnavailable('The database is temporarily unavailable. Retry the request.');
-  }
-  switch (code) {
+  switch (errorCode(exception.driverError)) {
     case '23505':
       return problem(
         'conflict',
@@ -183,12 +157,11 @@ export function resolveProblem(exception: unknown): ResolvedProblem {
   if (exception instanceof HttpException) {
     return fromHttpException(exception);
   }
+  if (isTransientError(exception)) {
+    return serviceUnavailable('A dependency of the service is unavailable. Retry the request.');
+  }
   if (exception instanceof QueryFailedError) {
     return fromDatabaseError(exception);
-  }
-  const code = errorCode(exception);
-  if (code && NETWORK_ERROR_CODES.has(code)) {
-    return serviceUnavailable('A dependency of the service is unavailable. Retry the request.');
   }
   return fromFrameworkClientError(exception) ?? INTERNAL_ERROR;
 }

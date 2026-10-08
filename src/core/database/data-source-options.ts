@@ -48,6 +48,9 @@ export function createDataSourceOptions(env: DatabaseEnv): DataSourceOptions {
       // Server-side guards: a runaway query or a forgotten open transaction cannot hold
       // locks and connections indefinitely.
       statement_timeout: env.DB_STATEMENT_TIMEOUT_MS,
+      // Client-side guard for when the server cannot enforce statement_timeout itself: a frozen host or a
+      // network partition would otherwise leave a query waiting forever (observed with a paused container).
+      query_timeout: env.DB_STATEMENT_TIMEOUT_MS + 1_000,
       idle_in_transaction_session_timeout: env.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS,
       idleTimeoutMillis: 30_000,
     },
