@@ -98,13 +98,20 @@ export class AreaIndexService implements OnApplicationBootstrap, OnApplicationSh
    */
   add(areas: readonly IndexedArea[]): Promise<number> {
     return this.change(() => {
-      const added = areas.filter((area) => !this.areas.has(area.id));
-      if (added.length === 0 || !this.index) {
+      if (!this.index) {
         // Before the first load there is nothing to add to; that load reads every area anyway.
         return Promise.resolve(0);
       }
-      for (const area of added) {
-        this.areas.set(area.id, area);
+      // One by one, so an event delivered twice in the same batch counts once.
+      const added: IndexedArea[] = [];
+      for (const area of areas) {
+        if (!this.areas.has(area.id)) {
+          this.areas.set(area.id, area);
+          added.push(area);
+        }
+      }
+      if (added.length === 0) {
+        return Promise.resolve(0);
       }
       this.index = AreaIndex.build([...this.areas.values()]);
       this.logger.info(

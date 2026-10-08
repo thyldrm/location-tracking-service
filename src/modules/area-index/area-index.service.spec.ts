@@ -79,6 +79,12 @@ describe('AreaIndexService', () => {
     expect(await service.add([NEW])).toBe(0);
   });
 
+  it('counts an area once when its event is delivered twice in the same batch', async () => {
+    const { service } = await loadedService([OLD]);
+
+    expect(await service.add([NEW, NEW])).toBe(1);
+  });
+
   it('does not lose an area added while a reload that missed it is still running', async () => {
     const { service, table } = await loadedService([OLD]);
 
