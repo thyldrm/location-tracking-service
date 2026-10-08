@@ -22,5 +22,13 @@
   "env": {
     "node": true
   },
-  "ignorePatterns": ["dist/**", "coverage/**"]
+  "ignorePatterns": ["dist/**", "coverage/**"],
+  "overrides": [
+    {
+      "files": ["**/*.spec.ts", "test/**/*.ts"],
+      "rules": {
+        "typescript/no-unsafe-type-assertion": "off"
+      }
+    }
+  ]
 }

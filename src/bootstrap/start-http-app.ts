@@ -1,7 +1,9 @@
-import { type DynamicModule, Logger } from '@nestjs/common';
+import { type DynamicModule } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import { Logger } from 'nestjs-pino';
 import type { Env } from '../core/config/env.schema.js';
+import { createFastifyAdapter } from './create-fastify-adapter.js';
 
 export type ProcessRole = 'api' | 'worker';
 
@@ -17,28 +19,29 @@ export function resolveHttpPort(role: ProcessRole, env: Pick<Env, 'HTTP_PORT'>):
 
 /**
  * Creates, configures and starts a Fastify-based Nest application for one process role.
- * Both roles share this bootstrap so that probes, HTTP limits and shutdown behave identically.
+ * Both roles share this bootstrap so that probes, HTTP limits, logging and shutdown behave identically.
  */
 export async function startHttpApp(
   rootModule: DynamicModule,
   role: ProcessRole,
   env: Env,
 ): Promise<NestFastifyApplication> {
-  const adapter = new FastifyAdapter({
-    bodyLimit: env.HTTP_BODY_LIMIT_BYTES,
-    trustProxy: env.HTTP_TRUST_PROXY,
-  });
+  const adapter = createFastifyAdapter(env);
 
+  // Logs produced while the module graph is being built are buffered until pino is installed.
   const app = await NestFactory.create<NestFastifyApplication>(rootModule, adapter, {
     bufferLogs: true,
   });
+  const logger = app.get(Logger);
+  app.useLogger(logger);
+  app.flushLogs();
 
   // Translates SIGTERM/SIGINT into Nest lifecycle hooks (onModuleDestroy, beforeApplicationShutdown, ...).
   app.enableShutdownHooks();
 
   const port = resolveHttpPort(role, env);
   await app.listen(port, env.HTTP_HOST);
-  new Logger('Bootstrap').log(`${role} role listening on http://${env.HTTP_HOST}:${port}`);
+  logger.log(`${role} role listening on http://${env.HTTP_HOST}:${port}`, 'Bootstrap');
 
   return app;
 }

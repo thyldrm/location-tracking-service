@@ -47,6 +47,22 @@ describe('validateEnv', () => {
     expect(error.message).toContain('at POSTGRES_DB');
   });
 
+  it('parses API_KEYS as a trimmed, comma-separated list', () => {
+    const first = 'a'.repeat(32);
+    const second = 'b'.repeat(40);
+
+    expect(
+      validateEnv({ ...requiredVariables, API_KEYS: ` ${first} , ${second},` }).API_KEYS,
+    ).toEqual([first, second]);
+    expect(validateEnv(requiredVariables).API_KEYS).toEqual([]);
+  });
+
+  it('rejects API keys that are too short to be secret', () => {
+    const error = captureError(() => validateEnv({ ...requiredVariables, API_KEYS: 'short-key' }));
+
+    expect(error.message).toContain('at least 32 characters');
+  });
+
   it('throws a readable error listing every invalid variable', () => {
     const error = captureError(() =>
       validateEnv({ ...requiredVariables, HTTP_PORT: 'not-a-port', LOG_LEVEL: 'verbose' }),

@@ -16,6 +16,8 @@ x-app: &app
   environment: &app-env
     NODE_ENV: production
     LOG_LEVEL: info
+    LOG_FORMAT: json
+    API_KEYS: local-development-api-key-change-me-0123456789
     HTTP_HOST: 0.0.0.0
     HTTP_PORT: '3000'
     POSTGRES_HOST: postgres

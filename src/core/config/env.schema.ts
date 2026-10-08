@@ -2,6 +2,18 @@ import { z } from 'zod';
 
 const booleanString = z.enum(['true', 'false']).transform((value) => value === 'true');
 
+/** Comma-separated list of service API keys. Several keys may be active at once (key rotation). */
+const apiKeyList = z
+  .string()
+  .optional()
+  .transform((value) =>
+    (value ?? '')
+      .split(',')
+      .map((key) => key.trim())
+      .filter((key) => key.length > 0),
+  )
+  .pipe(z.array(z.string().min(32, 'each API key must be at least 32 characters long')));
+
 /**
  * Schema of every environment variable the service reads.
  *
@@ -12,6 +24,11 @@ export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   SERVICE_NAME: z.string().min(1).default('location-tracking-service'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  // `json` (one object per line) everywhere except optionally on a developer machine.
+  LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
+
+  // Required by the API role only; the role refuses to start without at least one key.
+  API_KEYS: apiKeyList,
 
   HTTP_HOST: z.string().min(1).default('0.0.0.0'),
   // Optional: when unset each process role uses its own default (api 3000, worker 3001).

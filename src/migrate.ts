@@ -1,8 +1,10 @@
-import { Logger } from '@nestjs/common';
+import { pino } from 'pino';
 import { DataSource } from 'typeorm';
 import { loadEnv } from './core/config/load-env.js';
 import { AdvisoryLock, withAdvisoryLock } from './core/database/advisory-locks.js';
 import { createDataSourceOptions } from './core/database/data-source-options.js';
+import { createBootstrapLogger } from './core/logging/bootstrap-logger.js';
+import { createLoggerOptions } from './core/logging/logger-options.js';
 
 /**
  * Migration runner, executed as its own deployment step (Kubernetes Job / init container,
@@ -13,7 +15,7 @@ import { createDataSourceOptions } from './core/database/data-source-options.js'
  *
  * An advisory lock serialises concurrent runners, so starting several by mistake is harmless.
  */
-const logger = new Logger('Migrations');
+let logger = createBootstrapLogger('migrate');
 const command = process.argv[2] ?? 'run';
 
 if (command !== 'run' && command !== 'revert') {
@@ -21,28 +23,32 @@ if (command !== 'run' && command !== 'revert') {
   process.exit(2);
 }
 
-const dataSource = new DataSource(createDataSourceOptions(loadEnv()));
+let dataSource: DataSource | undefined;
 
 try {
+  const env = loadEnv();
+  logger = pino(createLoggerOptions(env, 'migrate'));
+  dataSource = new DataSource(createDataSourceOptions(env));
   await dataSource.initialize();
-  await withAdvisoryLock(dataSource, AdvisoryLock.Migrations, async () => {
+
+  const connected = dataSource;
+  await withAdvisoryLock(connected, AdvisoryLock.Migrations, async () => {
     if (command === 'revert') {
-      await dataSource.undoLastMigration({ transaction: 'each' });
-      logger.log('Reverted the most recent migration');
+      await connected.undoLastMigration({ transaction: 'each' });
+      logger.info('Reverted the most recent migration');
       return;
     }
-    const applied = await dataSource.runMigrations({ transaction: 'each' });
-    logger.log(
-      applied.length === 0
-        ? 'Schema is up to date'
-        : `Applied ${applied.length} migration(s): ${applied.map((m) => m.name).join(', ')}`,
+    const applied = await connected.runMigrations({ transaction: 'each' });
+    logger.info(
+      { applied: applied.map((migration) => migration.name) },
+      applied.length === 0 ? 'Schema is up to date' : `Applied ${applied.length} migration(s)`,
     );
   });
 } catch (error) {
-  logger.error('Migration failed', error instanceof Error ? error.stack : error);
+  logger.fatal({ err: error }, 'Migration failed');
   process.exitCode = 1;
 } finally {
-  if (dataSource.isInitialized) {
+  if (dataSource?.isInitialized) {
     await dataSource.destroy();
   }
 }

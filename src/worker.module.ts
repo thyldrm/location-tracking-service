@@ -1,4 +1,5 @@
 import { type DynamicModule, Module } from '@nestjs/common';
+import type { RootModuleOptions } from './api.module.js';
 import type { Env } from './core/config/env.schema.js';
 import { CoreModule } from './core/core.module.js';
 import { HealthModule } from './modules/health/health.module.js';
@@ -9,10 +10,13 @@ import { HealthModule } from './modules/health/health.module.js';
  */
 @Module({})
 export class WorkerModule {
-  static forRoot(env: Env): DynamicModule {
+  static forRoot(env: Env, options: RootModuleOptions = {}): DynamicModule {
     return {
       module: WorkerModule,
-      imports: [CoreModule.forRoot(env), HealthModule],
+      imports: [
+        CoreModule.forRoot(env, { role: 'worker', destination: options.logDestination }),
+        HealthModule,
+      ],
     };
   }
 }
