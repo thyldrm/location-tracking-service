@@ -47,9 +47,14 @@ docker compose --profile app up -d --build   # infrastructure + api + worker con
 - **Configuration:** the environment is validated once at startup (`loadEnv`). Providers read it through the typed
   `ConfigService<Env, true>`; infrastructure modules may receive the validated `Env` in `forRoot(env)`. Never read
   `process.env` outside `src/core/config`. Every new variable goes into the Zod schema and `.env.example`.
-- **Errors:** throw domain or HTTP exceptions; the global exception filter turns them into RFC 9457 problem details.
-  Never leak internal error messages or stack traces to clients.
-- **Logging:** use the injected logger; structured fields, not string concatenation. Never log secrets or full payloads
+- **Errors:** throw `AppError` subclasses from `src/core/errors/app-errors.ts` (`NotFoundError`, `ConflictError`, ...).
+  `ProblemDetailsFilter` renders every error as RFC 9457 problem details; never build error responses by hand and
+  never leak internal error messages or stack traces to clients. New mappings go into `resolveProblem` with a test.
+- **Request context:** read the correlation id through `RequestContext`; wrap non-HTTP units of work (e.g. a consumed
+  message) in `RequestContext.run(correlationId, ...)`. Do not use request-scoped providers.
+- **Authentication:** every API route requires `x-api-key` by default; mark intentionally open routes with `@Public()`.
+- **Logging:** inject `PinoLogger` (`@InjectPinoLogger(Context.name)`); pass structured fields as the first argument,
+  not string concatenation (`logger.info({ areaId }, 'Area created')`). No `console.*`. Never log secrets or full payloads
   of personal data at `info` level.
 - **Database:** schema changes only through migrations; `synchronize` stays `false`. When a migration changes the
   schema, update the entities too: the schema-drift integration test fails otherwise. Multi-row writes that must be

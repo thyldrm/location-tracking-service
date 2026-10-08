@@ -101,21 +101,51 @@ One repository, one container image, two entrypoints:
 
 ## 5. HTTP API
 
-All business endpoints require the header `x-api-key`. Health, metrics and docs endpoints do not.
-Every response carries an `x-request-id` header (echoed from the request or generated).
-Errors use **RFC 9457 Problem Details** (`application/problem+json`):
+### 5.0 Conventions for every endpoint
+
+**Authentication.** Every route requires the header `x-api-key` with one of the keys configured in `API_KEYS`
+(comma-separated, at least 32 characters each; several keys may be active at once to allow rotation). Routes that
+must stay reachable without a key (health probes, metrics, API docs) are explicitly marked public. A missing or
+invalid key returns `401` with a `WWW-Authenticate` header. Keys are compared in constant time and are never logged.
+Requests to routes that do not exist return `404` before authentication runs.
+
+**Correlation.** Every request is assigned a correlation id:
+
+- If the request carries an `x-request-id` header matching `^[A-Za-z0-9._:-]{1,128}$` (for example one set by the
+  API gateway), that value is used; otherwise a UUIDv7 is generated. Unsafe values are replaced, never echoed.
+- The id is returned in the `x-request-id` response header and in the `correlationId` member of error responses.
+- Every log line written while handling the request carries it as `correlationId`.
+- It is propagated to Kafka message headers and outbox events, so one id follows a ping from the HTTP request
+  through the worker to the domain events.
+
+**Errors.** Every error response is an **RFC 9457 Problem Details** document (`application/problem+json`):
 
 ```json
 {
-  "type": "https://errors.location-tracking/validation",
+  "type": "https://location-tracking-service/problems/validation-error",
   "title": "Validation failed",
   "status": 400,
   "detail": "Request body is invalid.",
   "instance": "/locations",
-  "requestId": "0192f5c4-...",
+  "correlationId": "0192f5c4-...",
   "errors": [{ "path": "latitude", "message": "Number must be less than or equal to 90" }]
 }
 ```
+
+| `type` (suffix after `https://location-tracking-service/problems/`) | Status | Meaning                                                                                                                                                |
+| ------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `validation-error`                                                  | 400    | Request failed validation; `errors` lists the offending fields                                                                                         |
+| `unauthorized`                                                      | 401    | Missing or invalid API key                                                                                                                             |
+| `not-found`                                                         | 404    | The addressed resource does not exist                                                                                                                  |
+| `conflict`                                                          | 409    | The request conflicts with existing state (e.g. duplicate area name)                                                                                   |
+| `unprocessable`                                                     | 422    | Semantically invalid request (e.g. `Idempotency-Key` reused with a different body)                                                                     |
+| `rate-limited`                                                      | 429    | Per-user rate limit exceeded; `Retry-After` set                                                                                                        |
+| `service-unavailable`                                               | 503    | A dependency is unavailable or overloaded; `Retry-After` set; safe to retry                                                                            |
+| `internal-error`                                                    | 500    | Unexpected failure; details are logged, never returned                                                                                                 |
+| `about:blank`                                                       | 4xx    | Generic HTTP errors raised by the framework (unknown route, malformed JSON, body too large, unsupported media type); `title` is the HTTP status phrase |
+
+Internal error messages, stack traces and infrastructure details are never included in responses. Unexpected errors
+(5xx) are logged at `error` level with their stack trace and correlation id.
 
 ### 5.1 `POST /locations`
 
@@ -430,7 +460,7 @@ Area index:
 - **Latency:** `POST /locations` p99 < 50 ms at target load (excluding network).
 - **Freshness:** ping → entry visible p99 < 1 s under normal load.
 - **Graceful shutdown:** on `SIGTERM` stop accepting work, finish in-flight batches, commit offsets, flush the producer, close pools.
-- **Observability:** JSON logs with `requestId` on every line; Prometheus metrics for HTTP latency, pings produced/processed,
+- **Observability:** JSON logs (one object per line on stdout) with `correlationId` on every line; Prometheus metrics for HTTP latency, pings produced/processed,
   entries/exits detected, processing latency, outbox backlog, DLQ count.
 - **Configuration:** environment variables validated at startup; the process refuses to start on invalid configuration.
 - **Security:** API key comparison in constant time; request body size limit; no stack traces or internal errors in responses.
@@ -451,7 +481,7 @@ Area index:
 | --- | ----------------------------------------------------------------- | ------- |
 | 0   | Repository skeleton, tooling, config validation, Docker Compose   | done    |
 | 1   | Database schema and migrations                                    | done    |
-| 2   | Error handling, correlation id, structured logging, API key guard | planned |
+| 2   | Error handling, correlation id, structured logging, API key guard | done    |
 | 3   | Areas API + outbox writer + idempotency keys                      | planned |
 | 4   | Kafka module + `POST /locations` + rate limiting                  | planned |
 | 5   | Worker: area index, entry detection, retries, DLQ                 | planned |
