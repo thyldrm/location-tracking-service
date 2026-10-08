@@ -393,12 +393,12 @@ Future: range-partition by `entered_at` (monthly) once volume requires it.
 
 ### `user_area_presence`
 
-| Column       | Type          | Notes                                                                            |
-| ------------ | ------------- | -------------------------------------------------------------------------------- |
-| `user_id`    | `varchar(64)` | `pk_user_area_presence (user_id, area_id)`                                       |
-| `area_id`    | `uuid`        | `fk_user_area_presence_area` → `areas.id`; `idx_user_area_presence_area`         |
-| `entry_id`   | `uuid`        | `fk_user_area_presence_entry` → `area_entries.id`; `uq_user_area_presence_entry` |
-| `entered_at` | `timestamptz` |                                                                                  |
+| Column       | Type          | Notes                                                                                                 |
+| ------------ | ------------- | ----------------------------------------------------------------------------------------------------- |
+| `user_id`    | `varchar(64)` | `pk_user_area_presence (user_id, area_id)`                                                            |
+| `area_id`    | `uuid`        | `fk_user_area_presence_area` → `areas.id`; `idx_user_area_presence_area`                              |
+| `entry_id`   | `uuid`        | `fk_user_area_presence_entry` → `area_entries.id` (deferred to commit); `uq_user_area_presence_entry` |
+| `entered_at` | `timestamptz` |                                                                                                       |
 
 The primary key `(user_id, area_id)` is the **idempotency guard** for entries: an entry is only written
 if the presence row was actually inserted (`INSERT … ON CONFLICT DO NOTHING RETURNING`).
@@ -443,40 +443,65 @@ Autovacuum runs at a 1 % dead-tuple threshold on this table.
 
 ## 8. Entry detection algorithm (worker)
 
-For each batch consumed from `location.pings.v1`:
+The worker consumes `location.pings.v1` in the consumer group `KAFKA_CONSUMER_GROUP` (default `entry-detector`), starting at
+the oldest retained message when the group is new. It starts consuming only after the area index is loaded. Each instance
+processes up to `WORKER_PARTITION_CONCURRENCY` partitions in parallel.
 
-1. Decode and validate each message; invalid messages go to the DLQ immediately (no retry).
-2. Group messages by `userId`, preserving partition order.
+For each batch of one partition:
+
+1. Decode and validate each message (`schema-version` header must be `1`, value must match the ping schema); invalid
+   messages go to the DLQ immediately (no retry) and the batch continues.
+2. Group messages by `userId`, preserving partition order. Users are processed concurrently, the pings of one user one
+   after another.
 3. For each user, for each ping in order:
-   1. `current = areaIndex.areasContaining(lon, lat)` — R-tree bbox search, then exact point-in-polygon (boundary = inside).
+   1. `current = areaIndex.areasContaining(lon, lat)` — R-tree bbox search, then exact point-in-polygon (boundary = inside,
+      matching `ST_Covers`; verified against PostGIS by a test).
    2. Load `state = { areaIds, lastPingAt, lastTransitionAt }` from Redis; on miss or Redis failure load presence and
-      `last_transition_at` from PostgreSQL.
+      `last_transition_at` from PostgreSQL (`lastPingAt` is then unknown).
    3. If `ping.timestamp <= max(lastPingAt, lastTransitionAt)` → skip (out of order / duplicate).
-   4. If `lastPingAt` is known and `ping.timestamp - lastPingAt > PRESENCE_TTL_MS` → treat all previous areas as exited at `lastPingAt`.
-   5. `entered = current − previous`, `exited = previous − current`.
-   6. If there is no transition → update `lastPingAt` in Redis only. Done.
-   7. Otherwise, delete the user's Redis key, then in **one PostgreSQL transaction**:
-      - for each entered area: `INSERT INTO user_area_presence … ON CONFLICT DO NOTHING RETURNING`;
-        only if a row was inserted → insert `area_entries` row and an `area.entered` outbox event;
-      - for each exited area: `DELETE FROM user_area_presence … RETURNING entry_id`;
-        only if a row was deleted → set `area_entries.exited_at` and insert an `area.exited` outbox event;
-      - upsert `user_tracking_state.last_transition_at`.
-   8. After commit, write the new state to Redis (TTL = `PRESENCE_TTL_MS`).
-4. Commit Kafka offsets **only after** all database work for the batch has committed.
+   4. If `lastPingAt` is known and `ping.timestamp - lastPingAt > PRESENCE_TTL_MS` → treat all previous areas as exited at
+      `lastPingAt`.
+   5. `entered = current − previous`, `exited = previous − current` (exit time = `ping.timestamp`).
+   6. If there is no transition → write the new state (new `lastPingAt`) to Redis only. Done.
+   7. Otherwise, delete the user's Redis key, then in **one PostgreSQL transaction**, exits first (so a stale session can
+      be closed and a new one opened in the same area):
+      - for each exited area: `DELETE FROM user_area_presence … RETURNING entry_id, entered_at`; only if a row was deleted
+        → set `area_entries.exited_at` (never earlier than `entered_at`) and insert an `area.exited` outbox event;
+      - for each entered area: `INSERT INTO user_area_presence … ON CONFLICT DO NOTHING RETURNING`; only if a row was
+        inserted → insert the `area_entries` row and an `area.entered` outbox event. The presence row references an entry
+        inserted after it, so `fk_user_area_presence_entry` is checked at commit (`DEFERRABLE INITIALLY DEFERRED`);
+      - move `user_tracking_state.last_transition_at` forward (never backwards).
+   8. After commit, write the new state to Redis with TTL `PRESENCE_STATE_TTL_MS` (default 24 h). The TTL must exceed
+      `PRESENCE_TTL_MS` (validated at startup): the last ping time has to outlive a silence longer than a session, or the
+      stale-session rule (step 4) could not apply.
+4. Kafka offsets are committed (periodically, by the client) only for batches whose processing completed.
+
+Every ping is processed with the correlation id from its `x-request-id` header, so logs and outbox events of the worker
+carry the id of the HTTP request that accepted the ping.
 
 Failure handling:
 
-- Transient errors (database / Redis timeouts) → retry the batch with exponential backoff, do not commit offsets.
-  Kafka retains the messages; consumer lag grows and is alerted on.
-- A message that fails `WORKER_MAX_ATTEMPTS` times with a non-transient error → DLQ with the error in headers.
-- Duplicate delivery after a crash is harmless: the presence primary key and the `DELETE … RETURNING` guards make
-  the processing idempotent, so no duplicate entries or events are produced.
+- **Transient errors** (database or network unavailable, timeouts; see `isTransientError`) → the batch is redelivered from
+  its first unprocessed message after an exponential back-off with jitter (0.5 s doubling up to 30 s). Offsets are not
+  committed; Kafka retains the messages and consumer lag grows (alerted on, milestone 8).
+- **Other errors** → the ping is retried up to `WORKER_MAX_ATTEMPTS` times (default 3) in place, then sent to the DLQ.
+- **DLQ messages** keep the original key, value and headers and add `x-dlq-reason` (`invalid-message` or
+  `processing-failed`), `x-dlq-error`, `x-dlq-attempts`, `x-original-topic`, `x-original-partition`, `x-original-offset`,
+  so they can be inspected and replayed to the original topic after a fix.
+- Duplicate delivery after a crash or rebalance is harmless: the presence primary key and the `DELETE … RETURNING` guards
+  make the processing idempotent, so no duplicate entries or events are produced, even with a stale or lost Redis state.
+- **Degraded mode:** if the cached state is lost (Redis data loss or eviction), `lastPingAt` is unknown until the user's
+  next ping and a stale session that ended during that time is not detected (no new entry for it). Ordering is still
+  enforced through `last_transition_at`.
 
 Area index:
 
-- Loaded fully from PostgreSQL at startup (worker is not ready until loaded).
-- Refreshed on `area.created` events and fully reloaded every `AREA_INDEX_REFRESH_MS` (default 60 s) as a safety net.
-- Pings processed in the short window between area creation and index refresh may miss the new area (documented eventual consistency).
+- Loaded fully from PostgreSQL at startup; until then no ping is consumed (an empty index would exit every user from
+  every area). A failed initial load is retried every 5 s.
+- Fully reloaded every `AREA_INDEX_REFRESH_MS` (default 60 s); a failed reload keeps the previous index. Refresh on
+  `area.created` events is added with milestone 6.
+- Pings processed in the short window between area creation and index refresh may miss the new area (documented eventual
+  consistency).
 
 ## 9. Outbox relay
 
@@ -532,7 +557,7 @@ Area index:
 | 2   | Error handling, correlation id, structured logging, API key guard | done    |
 | 3   | Areas API + outbox writer + idempotency keys                      | done    |
 | 4   | Kafka module + `POST /locations` + rate limiting                  | done    |
-| 5   | Worker: area index, entry detection, retries, DLQ                 | planned |
+| 5   | Worker: area index, entry detection, retries, DLQ                 | done    |
 | 6   | Outbox relay + area index refresh                                 | planned |
 | 7   | `GET /logs`                                                       | planned |
 | 8   | Health, metrics, graceful shutdown                                | planned |

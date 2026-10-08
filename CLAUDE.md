@@ -77,6 +77,11 @@ docker compose --profile app up -d --build   # infrastructure + migrations + top
   without it.
 - **Logging volume:** high-volume endpoints log access at `debug`. Errors raised on purpose for an outage (`429`,
   `503`) are `expected`; report the outage once where it is detected, not per request.
+- **Transient failures:** classify with `isTransientError` (`src/core/errors/transient-errors.ts`): the API answers them
+  with `503`, the worker retries them with back-off. Anything else in the worker is retried a few times, then sent to the
+  dead letter topic with the error in its headers.
+- **TypeORM `returning`:** pass a string (`.returning('entry_id, entered_at')`), which is used verbatim. An array is read
+  as entity property names and silently dropped when it contains column names.
 - **Uniqueness:** enforce it with a named unique constraint and translate the violation (`isUniqueViolation`) into a
   `ConflictError`; never "check, then insert".
 - **Tests:** unit tests live next to the code as `*.spec.ts`; e2e/integration tests live in `test/`.
