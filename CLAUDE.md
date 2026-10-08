@@ -20,8 +20,8 @@ npm run format           # prettier --write
 npm run typecheck        # tsc --noEmit
 npm test                 # unit tests (vitest), no infrastructure needed
 npm run test:integration # integration + e2e tests against real containers (Testcontainers; Docker required)
-npm run migration:run    # apply pending migrations (after `npm run build`)
-npm run migration:revert # revert the most recent migration
+npm run migration:run    # build, then apply pending migrations
+npm run migration:revert # build, then revert the most recent migration
 docker compose up -d     # PostgreSQL/PostGIS, Kafka, Redis
 docker compose --profile app up -d --build   # infrastructure + api + worker containers
 ```
@@ -54,6 +54,11 @@ docker compose --profile app up -d --build   # infrastructure + api + worker con
 - **Database:** schema changes only through migrations; `synchronize` stays `false`. When a migration changes the
   schema, update the entities too: the schema-drift integration test fails otherwise. Multi-row writes that must be
   consistent go into one explicit transaction. Use keyset pagination, not `OFFSET`.
+- **Queries:** use TypeORM (Repository / QueryBuilder) wherever it can express the query — it covers
+  `ON CONFLICT` (`orIgnore` / `orUpdate`), `RETURNING` and `FOR UPDATE SKIP LOCKED` (`setOnLocked`). Raw SQL only
+  with a concrete reason: migrations, PostgreSQL features TypeORM has no API for (e.g. advisory locks), and tests that
+  verify database rules independently of the ORM. Raw SQL is always parameterized and lives in the infrastructure /
+  repository layer, never in controllers or services.
 - **Messaging:** delivery is at-least-once; every consumer must be idempotent. Never publish to Kafka inside a
   database transaction — write to the outbox instead.
 - **Tests:** unit tests live next to the code as `*.spec.ts`; e2e/integration tests live in `test/`.
@@ -63,3 +68,9 @@ docker compose --profile app up -d --build   # infrastructure + api + worker con
 
 - Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `build:`, `ci:`), enforced by commitlint.
 - Small, focused commits; each commit builds and passes lint and tests.
+
+## Local development
+
+- Documented commands must work unchanged in bash, zsh and PowerShell: no `VAR=value cmd` prefixes and no `&&`
+  chains in docs (Windows PowerShell 5.1 has no `&&`). Put chains inside npm scripts instead.
+- `HTTP_PORT` is optional; the api defaults to 3000 and the worker to 3001 so both run side by side.

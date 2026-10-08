@@ -8,22 +8,23 @@ is specified in [SPEC.md](SPEC.md).
 
 ## Quick start
 
-Prerequisites: Node.js 24, Docker. Shell examples use POSIX syntax (Linux, macOS, or Git Bash / WSL on Windows).
+Prerequisites: Node.js 24, Docker. Every command below runs as-is in bash, zsh and PowerShell
+(in `cmd.exe`, use `copy` instead of `cp`).
 
 ```bash
 cp .env.example .env
 npm ci
 docker compose up -d          # PostgreSQL/PostGIS, Kafka, Redis
-npm run build && npm run migration:run
+npm run migration:run         # builds, then applies pending migrations
 npm run start:dev             # API role on :3000
-HTTP_PORT=3001 npm run start:worker:dev   # worker role on :3001
+npm run start:worker:dev      # worker role on :3001 (second terminal)
 ```
 
 Everything in containers (migrations run as a one-off `migrate` job before the api and worker start):
 
 ```bash
 docker compose --profile app up -d --build
-curl http://localhost:3000/health/live
+curl http://localhost:3000/health/live   # Windows PowerShell 5.1: curl.exe
 ```
 
 ## Scripts
