@@ -186,6 +186,13 @@ describe('Worker: entry detection (e2e)', () => {
     await dataSource.destroy();
   });
 
+  it('is ready once its area index is loaded', async () => {
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: 'ready', reasons: [] });
+  });
+
   it('records an entry with the client time of the first ping inside', async () => {
     const userId = user('enter');
     const pingId = await send(userId, INSIDE_A, at(0));

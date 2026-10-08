@@ -6,6 +6,7 @@ import { RequestContextModule } from './context/request-context.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { ProblemDetailsFilter } from './errors/problem-details.filter.js';
 import { FoundationModule } from './foundation/foundation.module.js';
+import { LifecycleModule } from './lifecycle/process-lifecycle.js';
 import { LoggingModule, type LoggingModuleOptions } from './logging/logging.module.js';
 import { MessagingModule } from './messaging/messaging.module.js';
 import { MetricsModule } from './metrics/metrics.module.js';
@@ -26,6 +27,7 @@ export class CoreModule {
       imports: [
         AppConfigModule.forRoot(env),
         FoundationModule,
+        LifecycleModule,
         RequestContextModule,
         LoggingModule.forRoot(env, options),
         MetricsModule.forRoot(options.role),
