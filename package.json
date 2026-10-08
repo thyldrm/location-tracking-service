@@ -23,8 +23,8 @@
     "test:cov": "vitest run --coverage",
     "prepare": "husky",
     "test:integration": "vitest run --config ./vitest.config.integration.ts",
-    "migration:run": "node dist/migrate.js run",
-    "migration:revert": "node dist/migrate.js revert"
+    "migration:run": "nest build && node dist/migrate.js run",
+    "migration:revert": "nest build && node dist/migrate.js revert"
   },
   "dependencies": {
     "@nestjs/common": "^12.1.2",
