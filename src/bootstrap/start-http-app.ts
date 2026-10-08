@@ -48,8 +48,10 @@ export async function startHttpApp(
     logger,
     exit: (code) => process.exit(code),
   });
-  // SIGTERM comes from the orchestrator, which still routes traffic to the process for a moment.
-  process.once('SIGTERM', () => void shutdown('SIGTERM', env.SHUTDOWN_DRAIN_DELAY_MS));
+  // SIGTERM comes from the orchestrator, which may still route traffic to the API for a moment. The worker
+  // receives no routed traffic (only probes and scrapes), so it has nothing to drain.
+  const drainDelayMs = role === 'api' ? env.SHUTDOWN_DRAIN_DELAY_MS : 0;
+  process.once('SIGTERM', () => void shutdown('SIGTERM', drainDelayMs));
   // Ctrl+C on a developer machine: nothing routes traffic here, close at once.
   process.once('SIGINT', () => void shutdown('SIGINT', 0));
 
