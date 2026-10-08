@@ -25,7 +25,10 @@ RUN npm run build
 # ---- Production-only dependencies ----
 FROM base AS prod-deps
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --ignore-scripts
+# The Kafka client is a native binding to librdkafka: its install step downloads the prebuilt binary for
+# this platform (linux, glibc). It is the only package whose install script runs.
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --ignore-scripts \
+  && npm rebuild @confluentinc/kafka-javascript
 
 # ---- Runtime image ----
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime

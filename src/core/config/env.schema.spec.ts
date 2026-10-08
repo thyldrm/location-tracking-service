@@ -63,6 +63,26 @@ describe('validateEnv', () => {
     expect(error.message).toContain('at least 32 characters');
   });
 
+  it('parses the Kafka broker list and requires at least one broker', () => {
+    expect(validateEnv(requiredVariables).KAFKA_BROKERS).toEqual(['localhost:9092']);
+    expect(
+      validateEnv({ ...requiredVariables, KAFKA_BROKERS: 'kafka-1:9092, kafka-2:9092' })
+        .KAFKA_BROKERS,
+    ).toEqual(['kafka-1:9092', 'kafka-2:9092']);
+    expect(() => validateEnv({ ...requiredVariables, KAFKA_BROKERS: ' , ' })).toThrow(
+      /KAFKA_BROKERS/,
+    );
+  });
+
+  it('accepts only redis:// and rediss:// URLs for Redis', () => {
+    expect(validateEnv({ ...requiredVariables, REDIS_URL: 'rediss://cache:6380' }).REDIS_URL).toBe(
+      'rediss://cache:6380',
+    );
+    expect(() => validateEnv({ ...requiredVariables, REDIS_URL: 'http://cache:6379' })).toThrow(
+      /REDIS_URL/,
+    );
+  });
+
   it('throws a readable error listing every invalid variable', () => {
     const error = captureError(() =>
       validateEnv({ ...requiredVariables, HTTP_PORT: 'not-a-port', LOG_LEVEL: 'verbose' }),

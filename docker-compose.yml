@@ -25,10 +25,14 @@ x-app: &app
     POSTGRES_USER: location
     POSTGRES_PASSWORD: location
     POSTGRES_DB: location_tracking
+    KAFKA_BROKERS: kafka:29092
+    REDIS_URL: redis://redis:6379
   depends_on:
     postgres:
       condition: service_healthy
     migrate:
+      condition: service_completed_successfully
+    provision-topics:
       condition: service_completed_successfully
     kafka:
       condition: service_healthy
@@ -128,6 +132,17 @@ services:
     restart: 'no'
     depends_on:
       postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  # One-off job: creates missing Kafka topics, then exits.
+  provision-topics:
+    <<: *app
+    command: ['node', 'dist/provision-topics.js']
+    restart: 'no'
+    depends_on:
+      kafka:
         condition: service_healthy
     healthcheck:
       disable: true

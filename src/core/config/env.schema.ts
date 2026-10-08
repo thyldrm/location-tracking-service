@@ -2,16 +2,19 @@ import { z } from 'zod';
 
 const booleanString = z.enum(['true', 'false']).transform((value) => value === 'true');
 
+/** `a, b,c` → `['a', 'b', 'c']`; blank entries are dropped. */
+const commaSeparatedList = z.string().transform((value) =>
+  value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0),
+);
+
 /** Comma-separated list of service API keys. Several keys may be active at once (key rotation). */
 const apiKeyList = z
   .string()
-  .optional()
-  .transform((value) =>
-    (value ?? '')
-      .split(',')
-      .map((key) => key.trim())
-      .filter((key) => key.length > 0),
-  )
+  .default('')
+  .pipe(commaSeparatedList)
   .pipe(z.array(z.string().min(32, 'each API key must be at least 32 characters long')));
 
 /**
@@ -50,6 +53,22 @@ export const envSchema = z.object({
 
   // Upper bound on the positions of one area polygon (all rings together).
   AREA_MAX_VERTICES: z.coerce.number().int().min(4).max(100_000).default(5_000),
+
+  KAFKA_BROKERS: commaSeparatedList
+    .pipe(z.array(z.string().min(1)).min(1))
+    .default(['localhost:9092']),
+  // How long a produced message may wait for the broker's acknowledgement before the request fails with 503.
+  KAFKA_DELIVERY_TIMEOUT_MS: z.coerce.number().int().min(100).max(300_000).default(3_000),
+  // Messages buffered in the producer before new ones are rejected (backpressure → 503).
+  KAFKA_PRODUCER_QUEUE_MAX_MESSAGES: z.coerce.number().int().positive().default(100_000),
+  // Time the producer waits to fill a batch: a little latency for much higher throughput.
+  KAFKA_LINGER_MS: z.coerce.number().int().min(0).max(1_000).default(5),
+  // Used when provisioning topics; production clusters use 3.
+  KAFKA_REPLICATION_FACTOR: z.coerce.number().int().min(1).max(5).default(1),
+
+  REDIS_URL: z.url({ protocol: /^rediss?$/ }).default('redis://localhost:6379'),
+  // Redis is on the hot path; a slow Redis must not slow the API down (rate limiting fails open).
+  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().int().min(10).max(10_000).default(100),
 });
 
 export type Env = z.infer<typeof envSchema>;

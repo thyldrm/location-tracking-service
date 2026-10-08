@@ -12,7 +12,7 @@ export function testEnv(overrides: Record<string, string> = {}): Env {
     NODE_ENV: 'test',
     LOG_LEVEL: 'silent',
     API_KEYS: TEST_API_KEY,
-    ...inject('databaseEnv'),
+    ...inject('infrastructureEnv'),
     ...overrides,
   });
 }

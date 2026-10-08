@@ -24,7 +24,8 @@
     "prepare": "husky",
     "test:integration": "vitest run --config ./vitest.config.integration.ts",
     "migration:run": "nest build && node dist/migrate.js run",
-    "migration:revert": "nest build && node dist/migrate.js revert"
+    "migration:revert": "nest build && node dist/migrate.js revert",
+    "topics:provision": "nest build && node dist/provision-topics.js"
   },
   "dependencies": {
     "@confluentinc/kafka-javascript": "^1.11.0",
