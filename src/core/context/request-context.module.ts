@@ -19,6 +19,8 @@ import { RequestContext } from './request-context.js';
         middleware: {
           mount: true,
           generateId: true,
+          // No proxy providers are used; resolving them costs a dynamic import() on every request.
+          resolveProxyProviders: false,
           idGenerator: (request: IncomingMessage) => ensureCorrelationId(request, () => ids.next()),
           setup: (cls: ClsService, _request: IncomingMessage, response: ServerResponse) => {
             response.setHeader(CORRELATION_ID_HEADER, cls.getId());
