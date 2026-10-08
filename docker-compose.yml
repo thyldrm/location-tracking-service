@@ -161,6 +161,13 @@ services:
     ports:
       - '3001:3000'
 
+  # Load generator (load/README.md): docker compose run --rm k6 run /load/ingest.js
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: ['load']
+    volumes:
+      - ./load:/load:ro
+
 volumes:
   postgres-data:
   kafka-data:

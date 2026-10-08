@@ -1,0 +1,11 @@
+# Override for load tests with several api / worker containers (load/README.md):
+#
+#   docker compose -f docker-compose.yml -f load/compose.scale.yml --profile app up -d --scale api=4 --scale worker=2
+#
+# Replicas cannot share a fixed host port, so the api and the worker are not published on the host here.
+# The load generator reaches them on the compose network: `api` resolves to every api container.
+services:
+  api:
+    ports: !reset []
+  worker:
+    ports: !reset []
