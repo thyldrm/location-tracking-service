@@ -10,7 +10,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Repository } from 'typeorm';
 import type { Env } from '../../core/config/env.schema.js';
 import { AreaEntity } from '../areas/area.entity.js';
-import { AreaIndex } from './area-index.js';
+import { AreaIndex, type IndexedArea } from './area-index.js';
 
 const RETRY_DELAY_MS = 5_000;
 
@@ -19,19 +19,25 @@ const RETRY_DELAY_MS = 5_000;
  *
  * - Loaded fully from PostgreSQL at startup. Until then the worker must not process pings: an empty index
  *   would make every user "exit" every area. `whenReady()` lets the consumer wait for it.
- * - Reloaded every `AREA_INDEX_REFRESH_MS`, so a new area is picked up within that time even if its
- *   `area.created` event is missed. A failed reload keeps serving the previous index.
- * - Each load builds a new immutable index and swaps the reference: readers never see a half-built one.
+ * - New areas are added from their `area.created` events as they arrive (`add`), without a database read.
+ * - Reloaded every `AREA_INDEX_REFRESH_MS`, the safety net for a missed event. A failed reload keeps
+ *   serving the previous index.
+ * - Each change builds a new immutable index and swaps the reference: readers never see a half-built one.
+ * - Reloads and additions run one at a time. Otherwise a reload that read the table just before an area
+ *   was committed could finish after that area's event was applied, and drop it again.
  */
 @Injectable()
 export class AreaIndexService implements OnApplicationBootstrap, OnApplicationShutdown {
   private index: AreaIndex | undefined;
+  private areas = new Map<string, IndexedArea>();
+  /** Tail of the queue of index changes; each change starts when the previous one has settled. */
+  private changes: Promise<unknown> = Promise.resolve();
   private readonly ready = Promise.withResolvers<void>();
   private readonly stop = new AbortController();
   private refreshing: Promise<void> | undefined;
 
   constructor(
-    @InjectRepository(AreaEntity) private readonly areas: Repository<AreaEntity>,
+    @InjectRepository(AreaEntity) private readonly repository: Repository<AreaEntity>,
     private readonly config: ConfigService<Env, true>,
     @InjectPinoLogger(AreaIndexService.name) private readonly logger: PinoLogger,
   ) {}
@@ -71,16 +77,49 @@ export class AreaIndexService implements OnApplicationBootstrap, OnApplicationSh
     return this.index.areasContaining(longitude, latitude);
   }
 
-  /** Loads every area and replaces the index. Also called when an area is created (milestone 6). */
-  async reload(): Promise<void> {
-    const startedAt = performance.now();
-    const areas = await this.areas.find({ select: { id: true, geometry: true } });
-    this.index = AreaIndex.build(areas);
-    this.ready.resolve();
-    this.logger.info(
-      { areas: areas.length, durationMs: Math.round(performance.now() - startedAt) },
-      'Area index loaded',
-    );
+  /** Loads every area and replaces the index. */
+  reload(): Promise<void> {
+    return this.change(async () => {
+      const startedAt = performance.now();
+      const areas = await this.repository.find({ select: { id: true, geometry: true } });
+      this.areas = new Map(areas.map((area) => [area.id, area]));
+      this.index = AreaIndex.build([...this.areas.values()]);
+      this.ready.resolve();
+      this.logger.info(
+        { areas: areas.length, durationMs: Math.round(performance.now() - startedAt) },
+        'Area index loaded',
+      );
+    });
+  }
+
+  /**
+   * Adds areas taken from `area.created` events and returns how many were new. Areas never change once
+   * created, so an area already indexed (a replayed event) is left as it is.
+   */
+  add(areas: readonly IndexedArea[]): Promise<number> {
+    return this.change(() => {
+      const added = areas.filter((area) => !this.areas.has(area.id));
+      if (added.length === 0 || !this.index) {
+        // Before the first load there is nothing to add to; that load reads every area anyway.
+        return Promise.resolve(0);
+      }
+      for (const area of added) {
+        this.areas.set(area.id, area);
+      }
+      this.index = AreaIndex.build([...this.areas.values()]);
+      this.logger.info(
+        { added: added.map((area) => area.id), areas: this.areas.size },
+        'Areas added to the index from events',
+      );
+      return Promise.resolve(added.length);
+    });
+  }
+
+  /** Runs `work` after every change queued before it, whatever their outcome. */
+  private change<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.changes.then(work, work);
+    this.changes = result.catch(() => undefined);
+    return result;
   }
 
   private async loadAndRefresh(): Promise<void> {
