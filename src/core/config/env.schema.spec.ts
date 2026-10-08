@@ -20,7 +20,7 @@ describe('validateEnv', () => {
     const env = validateEnv(requiredVariables);
 
     expect(env.NODE_ENV).toBe('development');
-    expect(env.HTTP_PORT).toBe(3000);
+    expect(env.HTTP_PORT).toBeUndefined(); // each process role falls back to its own default port
     expect(env.HTTP_TRUST_PROXY).toBe(false);
     expect(env.POSTGRES_PORT).toBe(5432);
     expect(env.DB_POOL_MAX).toBe(10);

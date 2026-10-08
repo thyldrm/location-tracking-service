@@ -14,7 +14,8 @@ export const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
   HTTP_HOST: z.string().min(1).default('0.0.0.0'),
-  HTTP_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+  // Optional: when unset each process role uses its own default (api 3000, worker 3001).
+  HTTP_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
   HTTP_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
   HTTP_TRUST_PROXY: booleanString.default(false),
 
