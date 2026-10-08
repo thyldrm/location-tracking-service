@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Repository } from 'typeorm';
 import type { Env } from '../../core/config/env.schema.js';
+import { DatabaseConnection } from '../../core/database/database-connection.js';
 import { Metrics } from '../../core/metrics/metrics.js';
 import { AreaEntity } from '../areas/area.entity.js';
 import { AreaIndex, type IndexedArea } from './area-index.js';
@@ -39,6 +40,7 @@ export class AreaIndexService implements OnApplicationBootstrap, OnApplicationSh
 
   constructor(
     @InjectRepository(AreaEntity) private readonly repository: Repository<AreaEntity>,
+    private readonly database: DatabaseConnection,
     private readonly config: ConfigService<Env, true>,
     @InjectPinoLogger(AreaIndexService.name) private readonly logger: PinoLogger,
     private readonly metrics: Metrics,
@@ -136,6 +138,8 @@ export class AreaIndexService implements OnApplicationBootstrap, OnApplicationSh
 
   private async loadAndRefresh(): Promise<void> {
     const refreshMs = this.config.get('AREA_INDEX_REFRESH_MS', { infer: true });
+    // Nothing can be loaded before the process has connected to the database.
+    await this.database.whenConnected(this.stop.signal).catch(() => undefined);
     while (!this.stop.signal.aborted) {
       let delayMs = refreshMs;
       try {

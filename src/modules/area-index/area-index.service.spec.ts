@@ -3,6 +3,7 @@ import type { Polygon } from 'geojson';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Repository } from 'typeorm';
 import type { Env } from '../../core/config/env.schema.js';
+import type { DatabaseConnection } from '../../core/database/database-connection.js';
 import { Metrics } from '../../core/metrics/metrics.js';
 import type { AreaEntity } from '../areas/area.entity.js';
 import type { IndexedArea } from './area-index.js';
@@ -25,6 +26,12 @@ function square(minX: number, minY: number): Polygon {
 
 const OLD: IndexedArea = { id: 'old', geometry: square(0, 0) };
 const NEW: IndexedArea = { id: 'new', geometry: square(10, 10) };
+
+/** Already connected: loads run as soon as they are started. */
+const connected = {
+  isConnected: () => true,
+  whenConnected: () => Promise.resolve(),
+} as unknown as DatabaseConnection;
 
 const silentLogger = {
   info: vi.fn<() => void>(),
@@ -54,7 +61,13 @@ function controlledTable() {
 
 async function loadedService(areas: IndexedArea[]) {
   const table = controlledTable();
-  const service = new AreaIndexService(table.repository, config, silentLogger, new Metrics('test'));
+  const service = new AreaIndexService(
+    table.repository,
+    connected,
+    config,
+    silentLogger,
+    new Metrics('test'),
+  );
   const loading = service.reload();
   (await table.read(0)).resolve(areas);
   await loading;
@@ -114,6 +127,7 @@ describe('AreaIndexService', () => {
     const table = controlledTable();
     const service = new AreaIndexService(
       table.repository,
+      connected,
       config,
       silentLogger,
       new Metrics('test'),

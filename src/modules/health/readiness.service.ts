@@ -41,6 +41,7 @@ export class ReadinessService {
   }
 
   private async database(): Promise<DependencyStatus> {
+    if (!this.dataSource.isInitialized) return 'down';
     const timeout = new AbortController();
     try {
       // Raw SQL: the smallest possible round trip, there is no entity to query.

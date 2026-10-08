@@ -108,17 +108,24 @@ export class HousekeepingService implements OnApplicationBootstrap, OnApplicatio
     return { status: 'done', ...deleted };
   }
 
+  private async runAndReport(): Promise<void> {
+    try {
+      const result = await this.runOnce();
+      if (result.status === 'done' && result.outboxEvents + result.idempotencyKeys > 0) {
+        this.logger.info(result, 'Housekeeping deleted expired rows');
+      }
+    } catch (error) {
+      // Nothing depends on a single run; the next one catches up.
+      this.logger.warn({ err: error }, 'Housekeeping failed; retrying at the next interval');
+    }
+  }
+
   private async run(): Promise<void> {
     const intervalMs = this.config.get('HOUSEKEEPING_INTERVAL_MS', { infer: true });
     while (!this.stop.signal.aborted) {
-      try {
-        const result = await this.runOnce();
-        if (result.status === 'done' && result.outboxEvents + result.idempotencyKeys > 0) {
-          this.logger.info(result, 'Housekeeping deleted expired rows');
-        }
-      } catch (error) {
-        // Nothing depends on a single run; the next one catches up.
-        this.logger.warn({ err: error }, 'Housekeeping failed; retrying at the next interval');
+      // Not connected yet (DatabaseConnection reports it): the next interval catches up.
+      if (this.dataSource.isInitialized) {
+        await this.runAndReport();
       }
       await sleep(intervalMs, undefined, { signal: this.stop.signal }).catch(() => undefined);
     }

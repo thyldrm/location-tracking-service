@@ -93,7 +93,9 @@ docker compose run --rm k6 run /load/ingest.js   # load test of ingestion agains
   with the load test.
 - **Optional dependencies:** Redis is never required for correctness: code that uses it must degrade (fail open)
   when it is unavailable. Kafka is required for ingestion only; the process must start and serve other endpoints
-  without it.
+  without it. PostgreSQL is not needed for ingestion either: processes start without it and connect in the
+  background (`DatabaseConnection`). Code that uses the database before the first connection must wait for it
+  (`whenConnected`), check it (`DataSource.isInitialized`) or sit behind `DatabaseConnectedGuard`.
 - **Logging volume:** high-volume endpoints log access at `debug`. Errors raised on purpose for an outage (`429`,
   `503`) are `expected`; report the outage once where it is detected, not per request.
 - **Transient failures:** classify with `isTransientError` (`src/core/errors/transient-errors.ts`): the API answers them

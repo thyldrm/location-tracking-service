@@ -156,9 +156,9 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
 
     while (!this.stop.signal.aborted) {
       let delayMs = pollIntervalMs;
-      // Until the producer is connected there is nothing to try. The outage is reported by the producer
-      // itself, where it is detected; the relay just waits for the next poll.
-      if (this.producer.isConnected()) {
+      // Until the producer and the database are connected there is nothing to try. The outage is reported
+      // where it is detected (the producer, DatabaseConnection); the relay just waits for the next poll.
+      if (this.producer.isConnected() && this.dataSource.isInitialized) {
         try {
           const pass = await this.relayOnce();
           if (pass.role === 'leader' && pass.unavailable > 0) {

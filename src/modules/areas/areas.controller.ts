@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
+import { DatabaseConnectedGuard } from '../../core/database/database-connection.js';
 import type { Page } from '../../core/pagination/cursor.js';
 import { ZodValidationPipe } from '../../core/validation/zod-validation.pipe.js';
 import { IdempotencyKey } from '../idempotency/idempotency-key.decorator.js';
@@ -13,6 +14,8 @@ import {
 import { AreasService } from './areas.service.js';
 import { CreateAreaValidationPipe } from './create-area-validation.pipe.js';
 
+// 503 until the process has connected to the database (it starts without it).
+@UseGuards(DatabaseConnectedGuard)
 @Controller('areas')
 export class AreasController {
   constructor(private readonly areas: AreasService) {}
