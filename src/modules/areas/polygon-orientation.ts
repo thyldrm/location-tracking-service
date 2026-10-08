@@ -7,8 +7,8 @@ import type { Polygon, Position } from 'geojson';
 export function signedArea(ring: Position[]): number {
   let sum = 0;
   for (let index = 0; index < ring.length - 1; index++) {
-    const [x1 = 0, y1 = 0] = ring[index] ?? [];
-    const [x2 = 0, y2 = 0] = ring[index + 1] ?? [];
+    const [x1, y1] = ring[index];
+    const [x2, y2] = ring[index + 1];
     sum += x1 * y2 - x2 * y1;
   }
   return sum;

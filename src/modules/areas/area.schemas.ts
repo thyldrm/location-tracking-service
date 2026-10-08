@@ -7,6 +7,7 @@ const position = z.tuple([z.number().min(-180).max(180), z.number().min(-90).max
 const linearRing = z
   .array(position)
   .min(4, 'A linear ring needs at least 4 positions')
+  // Zod runs refinements even when `min` failed, so this must also cope with an empty ring.
   .refine(
     (ring) => {
       const first = ring[0];
