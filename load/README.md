@@ -61,6 +61,12 @@ docker compose run --rm k6 run -e RATE=1200 -e DURATION=100s -e WORKERS=0 /load/
 docker compose start worker
 ```
 
+### In Kubernetes
+
+The same script runs as a Job inside a cluster, against the API Service; see
+[deploy/k8s/README.md](../deploy/k8s/README.md). Pods are not reachable by container name there, so it runs with
+`APIS=0 WORKERS=0` and checks the client side only.
+
 ### Reading the results
 
 - Everything (k6, Kafka, PostgreSQL, Redis, the services) shares one machine. Watch `docker stats` during a run:

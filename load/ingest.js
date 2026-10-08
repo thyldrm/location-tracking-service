@@ -8,7 +8,8 @@
 //   RATE        pings per second (default 1000)
 //   DURATION    length of the constant-rate phase (default 60s)
 //   USERS       distinct simulated users (default 50000: at 10,000 pings/s every user pings every 5 s)
-//   APIS        api containers to read metrics from (default 1; see load/compose.scale.yml)
+//   APIS        api containers to read metrics from (default 1; see load/compose.scale.yml; 0 skips the
+//               service-side latency check, e.g. in Kubernetes: deploy/k8s/README.md)
 //   WORKERS     worker containers to read metrics from (default 1; 0 skips the freshness check, e.g. to
 //               build a backlog while the worker is stopped)
 //   BASE_URL    API base URL the pings are sent to (default http://api:3000, every api container)
@@ -76,7 +77,7 @@ export const options = {
     'checks{scenario:ingest}': ['rate>0.999'],
     // Iterations k6 could not start because every VU was busy: the system did not keep up with the rate.
     dropped_iterations: [`count<=${Math.ceil(RATE * seconds(DURATION) * MAX_DROPPED_RATIO)}`],
-    server_latency_within_50ms_ratio: ['value>=0.99'],
+    ...(API_INSTANCES.length > 0 ? { server_latency_within_50ms_ratio: ['value>=0.99'] } : {}),
     ...(WORKER_INSTANCES.length > 0 ? { freshness_within_1s_ratio: ['value>=0.99'] } : {}),
   },
   summaryTrendStats: ['avg', 'med', 'p(90)', 'p(99)', 'max'],
@@ -206,6 +207,11 @@ export default function () {
 }
 
 export function teardown(data) {
+  if (API_INSTANCES.length > 0) reportServerLatency(data);
+  if (WORKER_INSTANCES.length > 0) reportFreshness(data);
+}
+
+function reportServerLatency(data) {
   // The share of observations at or below the target is exact for a bucket boundary; no interpolation.
   const api = scrapeAll(API_INSTANCES);
   const route = 'method="POST",route="/locations",status_code="202"';
@@ -216,9 +222,9 @@ export function teardown(data) {
     `http_request_duration_seconds_bucket{le="${LATENCY_TARGET_SECONDS}",${route}}`,
   );
   serverLatencyWithinTarget.add(apiCount > 0 ? apiFast / apiCount : 0);
+}
 
-  if (WORKER_INSTANCES.length === 0) return;
-
+function reportFreshness(data) {
   // The worker may still be catching up: wait until its processed count stops growing.
   let worker = scrapeAll(WORKER_INSTANCES);
   for (let waited = 0; waited < 120; waited += 2) {
