@@ -10,7 +10,6 @@ import { DataSource, In, IsNull, LessThan } from 'typeorm';
 import type { Env } from '../../core/config/env.schema.js';
 import { AdvisoryLock, tryAdvisoryXactLock } from '../../core/database/advisory-locks.js';
 import { backoffDelayMs, withJitter } from '../../core/foundation/backoff.js';
-import { ThrottledLog } from '../../core/logging/throttled-log.js';
 import { MessageProducer, PublishError } from '../../core/messaging/message-producer.js';
 import { isTopic } from '../../core/messaging/topics.js';
 import { OutboxEventEntity } from './outbox-event.entity.js';
@@ -69,7 +68,6 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
   private running: Promise<void> | undefined;
   private readonly stop = new AbortController();
   private consecutiveFailures = 0;
-  private readonly waitingForKafka = new ThrottledLog(60_000, () => Date.now());
 
   constructor(
     private readonly dataSource: DataSource,
@@ -150,6 +148,8 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
 
     while (!this.stop.signal.aborted) {
       let delayMs = pollIntervalMs;
+      // Until the producer is connected there is nothing to try. The outage is reported by the producer
+      // itself, where it is detected; the relay just waits for the next poll.
       if (this.producer.isConnected()) {
         try {
           const pass = await this.relayOnce();
@@ -171,10 +171,6 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
         } catch (error) {
           delayMs = this.backOff({ err: error }, 'Outbox relay pass failed');
         }
-      } else {
-        this.waitingForKafka.record((suppressed) => {
-          this.logger.warn({ suppressed }, 'Outbox relay is waiting for the Kafka connection');
-        });
       }
       if (delayMs > 0) {
         await sleep(delayMs, undefined, { signal: this.stop.signal }).catch(() => undefined);
