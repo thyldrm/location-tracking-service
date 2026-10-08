@@ -33,7 +33,8 @@ docker compose --profile app up -d --build   # infrastructure + migrations + top
   runner. Same image, different command.
 - `src/api.module.ts`, `src/worker.module.ts` — root modules per role; both import `CoreModule`.
 - `src/core/` — cross-cutting infrastructure shared by both roles (config, logging, database, messaging, cache).
-- `src/modules/<feature>/` — feature modules (areas, locations, area-entries, presence, outbox, health).
+- `src/modules/<feature>/` — feature modules (areas, locations, area-index, entry-detection, area-entries, presence,
+  outbox, idempotency, housekeeping, health).
 - `src/core/database/migrations/` — hand-written SQL migrations (the only way the schema changes), registered in
   `migrations/index.ts`. Entities map the schema and are listed in `src/core/database/entities.ts`.
 - `docs/adr/` — Architecture Decision Records. Add one for every significant technical choice.
@@ -72,6 +73,12 @@ docker compose --profile app up -d --build   # infrastructure + migrations + top
   database transaction — write to the outbox instead (`OutboxWriter.append(manager, event)` with the transaction's
   `EntityManager`). Topic names live in `src/core/messaging/topics.ts`, their settings in `topic-definitions.ts`
   (topics are never auto-created). Publish through the `MessageProducer` abstraction, never the Kafka client directly.
+- **Work that must run on one instance** (outbox relay, housekeeping): take `tryAdvisoryXactLock` at the start of each
+  short transaction instead of holding a session-level lock: the lock then ends with the transaction, also when the
+  holder dies. Keys live in `AdvisoryLock` (`src/core/database/advisory-locks.ts`).
+- **Background loops** (consumers, relay, housekeeping): start in `onApplicationBootstrap` without awaiting, stop through
+  an `AbortController` in `onApplicationShutdown`, back off with `backoffDelayMs` + `withJitter` on failure, and never
+  let one failure end the loop.
 - **Optional dependencies:** Redis is never required for correctness: code that uses it must degrade (fail open)
   when it is unavailable. Kafka is required for ingestion only; the process must start and serve other endpoints
   without it.

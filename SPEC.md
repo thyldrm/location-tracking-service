@@ -70,7 +70,7 @@ These are deliberate assumptions made where the case is silent. Each is listed i
                     │                                3. diff → entries / exits
                     │                                4. write presence + entries + outbox in ONE transaction
                     ▼
-               outbox_events ──▶ Outbox relay (single active leader) ──▶ Kafka  area.lifecycle.v1
+               outbox_events ──▶ Outbox relay (one at a time, lock) ──▶ Kafka  area.lifecycle.v1
                                                                           Kafka  area.entries.v1
                Worker instances consume area.lifecycle.v1 (broadcast) to refresh the in-memory area index.
 ```
@@ -439,7 +439,7 @@ Autovacuum runs at a 1 % dead-tuple threshold on this table.
 | `key`          | `varchar(128)` | value of the `Idempotency-Key` header                           |
 | `resource_id`  | `uuid`         |                                                                 |
 | `request_hash` | `char(64)`     | SHA-256 of the body; a different body with the same key → `422` |
-| `created_at`   | `timestamptz`  | `idx_idempotency_keys_created_at`; expire after 24 h            |
+| `created_at`   | `timestamptz`  | `idx_idempotency_keys_created_at`; deleted after 24 h (§9)      |
 
 ## 8. Entry detection algorithm (worker)
 
@@ -498,22 +498,49 @@ Area index:
 
 - Loaded fully from PostgreSQL at startup; until then no ping is consumed (an empty index would exit every user from
   every area). A failed initial load is retried every 5 s.
-- Fully reloaded every `AREA_INDEX_REFRESH_MS` (default 60 s); a failed reload keeps the previous index. Refresh on
-  `area.created` events is added with milestone 6.
-- Pings processed in the short window between area creation and index refresh may miss the new area (documented eventual
-  consistency).
+- New areas are added from `area.created` events. Every instance consumes `area.lifecycle.v1` in a consumer group of its
+  own (`<SERVICE_NAME>.area-index.<uuid>`), from the beginning of the retained log and without committing offsets. The event
+  carries the geometry, so no database read is needed. Areas already indexed (replayed or duplicate events) are skipped;
+  invalid events are logged and skipped.
+- Fully reloaded every `AREA_INDEX_REFRESH_MS` (default 60 s) as reconciliation; a failed reload keeps the previous index.
+- Reloads and event additions are applied one at a time, so a reload that read the table before an area was committed
+  cannot drop that area after its event was applied.
+- A new area is detected within the outbox poll interval plus consumer latency (0.1–0.6 s measured). Pings processed
+  before that miss the new area (documented eventual consistency).
 
-## 9. Outbox relay
+## 9. Outbox relay and housekeeping
 
-- Runs inside the worker role. Exactly one active relay at a time, elected with a PostgreSQL advisory lock
-  (`pg_try_advisory_lock`); other instances stay on standby and retry the lock periodically.
-  A single relay preserves per-key ordering of events.
-- Loop: select up to `OUTBOX_BATCH_SIZE` unpublished rows ordered by `created_at, id`, publish them to Kafka
-  (idempotent producer, `acks=all`), mark them `published_at = now()`. Sleep `OUTBOX_POLL_INTERVAL_MS` when idle.
-- Publishing failures increment `attempts` and store `last_error`; the row is retried on the next loop.
-- A crash after publish but before marking causes a re-publish → consumers deduplicate by `eventId`.
-- Published rows older than `OUTBOX_RETENTION_MS` (default 7 d) are deleted by the relay.
-- The same housekeeping deletes `idempotency_keys` rows older than 24 h.
+Outbox relay (worker role, [ADR 0008](docs/adr/0008-outbox-relay-and-area-index-updates.md)):
+
+- Each pass is one transaction that starts with `pg_try_advisory_xact_lock`. If another instance holds the lock, this one
+  is on standby and tries again after `OUTBOX_POLL_INTERVAL_MS` (default 500 ms). The lock ends with the transaction,
+  also when PostgreSQL ends the session of a holder that froze or became unreachable
+  (`idle_in_transaction_session_timeout`, default 10 s), so failover needs no failure detector.
+- A pass selects up to `OUTBOX_BATCH_SIZE` (default 100) rows with `published_at IS NULL AND attempts <
+OUTBOX_MAX_ATTEMPTS`, ordered by `created_at, id`. It publishes them (idempotent producer, `acks=all`), sets
+  `published_at = now()` on the acknowledged rows, and commits.
+- Ordering: rows with the same message key are published one after another, and the first failure stops that key for the
+  pass, so a later event never overtakes an earlier one. Different keys are published concurrently.
+- A full batch published without failures is followed by the next pass at once (backlog drain).
+- Rows are always selected as unpublished, never as "newer than the last row seen". A transaction that commits late with
+  an older `created_at` is still picked up.
+- Failures:
+  - Kafka unavailable or slow (`unavailable`, `timeout`, `queue-full`): the rows are left as they are and the relay backs
+    off with jitter (0.5 s doubling to 30 s). It does not try while the producer has never connected.
+  - Rejected by the broker, or unknown topic: `attempts + 1` and `last_error`. At `OUTBOX_MAX_ATTEMPTS` (default 10) the
+    row is parked: no longer selected, kept for an operator.
+  - Database errors: the pass rolls back and the relay backs off.
+- The relay waits for broker acknowledgements inside its transaction, so `KAFKA_DELIVERY_TIMEOUT_MS` must be lower than
+  `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` (validated at startup).
+- Delivery is at least once. A relay that publishes and then dies before its commit, or freezes past the idle timeout,
+  leaves the rows unpublished, and the next pass publishes them again. Consumers deduplicate by `eventId`.
+
+Housekeeping (worker role), at startup and every `HOUSEKEEPING_INTERVAL_MS` (default 10 min):
+
+- deletes outbox rows published more than `OUTBOX_RETENTION_MS` (default 7 d) ago; unpublished rows are never deleted;
+- deletes idempotency keys created more than `IDEMPOTENCY_KEY_TTL_MS` (default 24 h) ago;
+- works in chunks of 1,000 rows, one transaction per chunk, each under `pg_try_advisory_xact_lock`; an instance that does
+  not get the lock skips the run.
 
 ## 10. Failure modes
 
@@ -523,7 +550,7 @@ Area index:
 | Redis unavailable         | Rate limiting fails **open**; worker reads/writes state from PostgreSQL only. Slower, still correct.                                                                                                                                                                                                                            |
 | PostgreSQL unavailable    | Worker stops committing offsets and retries with backoff (no data loss, lag grows). `/areas` and `/logs` → `503`. `POST /locations` keeps working.                                                                                                                                                                              |
 | Worker crash              | Partitions are rebalanced to other workers; uncommitted messages are redelivered and processed idempotently.                                                                                                                                                                                                                    |
-| Outbox relay leader crash | Advisory lock is released with its session; a standby instance takes over.                                                                                                                                                                                                                                                      |
+| Outbox relay leader crash | The relay's advisory lock ends with its transaction: at once when the process crashes, after `idle_in_transaction_session_timeout` (10 s) when the host freezes. Another instance takes over at its next poll; events of the interrupted pass may be published twice.                                                           |
 | Traffic spike             | API scales horizontally; Kafka absorbs bursts; workers scale up to the partition count; lag is the scaling signal.                                                                                                                                                                                                              |
 | Malformed ping in Kafka   | Sent to DLQ, never blocks the partition.                                                                                                                                                                                                                                                                                        |
 | Invalid polygon           | `400` with the PostGIS validity reason.                                                                                                                                                                                                                                                                                         |
@@ -558,7 +585,7 @@ Area index:
 | 3   | Areas API + outbox writer + idempotency keys                      | done    |
 | 4   | Kafka module + `POST /locations` + rate limiting                  | done    |
 | 5   | Worker: area index, entry detection, retries, DLQ                 | done    |
-| 6   | Outbox relay + area index refresh                                 | planned |
+| 6   | Outbox relay + area index refresh                                 | done    |
 | 7   | `GET /logs`                                                       | planned |
 | 8   | Health, metrics, graceful shutdown                                | planned |
 | 9   | Integration / e2e / load tests                                    | planned |
