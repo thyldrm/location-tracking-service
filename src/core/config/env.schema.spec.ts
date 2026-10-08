@@ -83,6 +83,16 @@ describe('validateEnv', () => {
     );
   });
 
+  it('requires the presence state to outlive a presence session', () => {
+    expect(() =>
+      validateEnv({
+        ...requiredVariables,
+        PRESENCE_TTL_MS: '900000',
+        PRESENCE_STATE_TTL_MS: '600000',
+      }),
+    ).toThrow(/PRESENCE_STATE_TTL_MS/);
+  });
+
   it('throws a readable error listing every invalid variable', () => {
     const error = captureError(() =>
       validateEnv({ ...requiredVariables, HTTP_PORT: 'not-a-port', LOG_LEVEL: 'verbose' }),

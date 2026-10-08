@@ -23,60 +23,82 @@ const apiKeyList = z
  * The process refuses to start when the environment does not satisfy this schema
  * (fail fast), so misconfiguration surfaces at deploy time instead of at the first request.
  */
-export const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  SERVICE_NAME: z.string().min(1).default('location-tracking-service'),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-  // `json` (one object per line) everywhere except optionally on a developer machine.
-  LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
+export const envSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    SERVICE_NAME: z.string().min(1).default('location-tracking-service'),
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .default('info'),
+    // `json` (one object per line) everywhere except optionally on a developer machine.
+    LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
 
-  // Required by the API role only; the role refuses to start without at least one key.
-  API_KEYS: apiKeyList,
+    // Required by the API role only; the role refuses to start without at least one key.
+    API_KEYS: apiKeyList,
 
-  HTTP_HOST: z.string().min(1).default('0.0.0.0'),
-  // Optional: when unset each process role uses its own default (api 3000, worker 3001).
-  HTTP_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
-  HTTP_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
-  HTTP_TRUST_PROXY: booleanString.default(false),
+    HTTP_HOST: z.string().min(1).default('0.0.0.0'),
+    // Optional: when unset each process role uses its own default (api 3000, worker 3001).
+    HTTP_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
+    HTTP_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
+    HTTP_TRUST_PROXY: booleanString.default(false),
 
-  // Credentials have no defaults on purpose: a deployment that forgets them must not start.
-  POSTGRES_HOST: z.string().min(1).default('localhost'),
-  POSTGRES_PORT: z.coerce.number().int().min(1).max(65_535).default(5432),
-  POSTGRES_USER: z.string().min(1),
-  POSTGRES_PASSWORD: z.string().min(1),
-  POSTGRES_DB: z.string().min(1),
-  POSTGRES_SSL: booleanString.default(false),
-  DB_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
-  DB_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
-  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
-  DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    // Credentials have no defaults on purpose: a deployment that forgets them must not start.
+    POSTGRES_HOST: z.string().min(1).default('localhost'),
+    POSTGRES_PORT: z.coerce.number().int().min(1).max(65_535).default(5432),
+    POSTGRES_USER: z.string().min(1),
+    POSTGRES_PASSWORD: z.string().min(1),
+    POSTGRES_DB: z.string().min(1),
+    POSTGRES_SSL: booleanString.default(false),
+    DB_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
+    DB_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 
-  // Upper bound on the positions of one area polygon (all rings together).
-  AREA_MAX_VERTICES: z.coerce.number().int().min(4).max(100_000).default(5_000),
+    // Upper bound on the positions of one area polygon (all rings together).
+    AREA_MAX_VERTICES: z.coerce.number().int().min(4).max(100_000).default(5_000),
 
-  KAFKA_BROKERS: commaSeparatedList
-    .pipe(z.array(z.string().min(1)).min(1))
-    .default(['localhost:9092']),
-  // How long a produced message may wait for the broker's acknowledgement before the request fails with 503.
-  KAFKA_DELIVERY_TIMEOUT_MS: z.coerce.number().int().min(100).max(300_000).default(3_000),
-  // Messages buffered in the producer before new ones are rejected (backpressure → 503).
-  KAFKA_PRODUCER_QUEUE_MAX_MESSAGES: z.coerce.number().int().positive().default(100_000),
-  // Time the producer waits to fill a batch: a little latency for much higher throughput.
-  KAFKA_LINGER_MS: z.coerce.number().int().min(0).max(1_000).default(5),
-  // Used when provisioning topics; production clusters use 3.
-  KAFKA_REPLICATION_FACTOR: z.coerce.number().int().min(1).max(5).default(1),
+    KAFKA_BROKERS: commaSeparatedList
+      .pipe(z.array(z.string().min(1)).min(1))
+      .default(['localhost:9092']),
+    // How long a produced message may wait for the broker's acknowledgement before the request fails with 503.
+    KAFKA_DELIVERY_TIMEOUT_MS: z.coerce.number().int().min(100).max(300_000).default(3_000),
+    // Messages buffered in the producer before new ones are rejected (backpressure → 503).
+    KAFKA_PRODUCER_QUEUE_MAX_MESSAGES: z.coerce.number().int().positive().default(100_000),
+    // Time the producer waits to fill a batch: a little latency for much higher throughput.
+    KAFKA_LINGER_MS: z.coerce.number().int().min(0).max(1_000).default(5),
+    // Used when provisioning topics; production clusters use 3.
+    KAFKA_REPLICATION_FACTOR: z.coerce.number().int().min(1).max(5).default(1),
 
-  REDIS_URL: z.url({ protocol: /^rediss?$/ }).default('redis://localhost:6379'),
-  // Redis is on the hot path; a slow Redis must not slow the API down (rate limiting fails open).
-  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().int().min(10).max(10_000).default(100),
+    REDIS_URL: z.url({ protocol: /^rediss?$/ }).default('redis://localhost:6379'),
+    // Redis is on the hot path; a slow Redis must not slow the API down (rate limiting fails open).
+    REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().int().min(10).max(10_000).default(100),
 
-  // Accepted client timestamps: at most this far in the future (clock skew) ...
-  PING_MAX_FUTURE_SKEW_MS: z.coerce.number().int().min(0).default(60_000),
-  // ... and at most this old.
-  PING_MAX_AGE_MS: z.coerce.number().int().positive().default(86_400_000),
-  RATE_LIMIT_PINGS_PER_WINDOW: z.coerce.number().int().positive().default(10),
-  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(100).default(10_000),
-});
+    // Accepted client timestamps: at most this far in the future (clock skew) ...
+    PING_MAX_FUTURE_SKEW_MS: z.coerce.number().int().min(0).default(60_000),
+    // ... and at most this old.
+    PING_MAX_AGE_MS: z.coerce.number().int().positive().default(86_400_000),
+    RATE_LIMIT_PINGS_PER_WINDOW: z.coerce.number().int().positive().default(10),
+    RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(100).default(10_000),
+
+    // Worker: consumer group of the entry detector (work queue: the group shares the partitions).
+    KAFKA_CONSUMER_GROUP: z.string().min(1).default('entry-detector'),
+    // Partitions a worker instance processes in parallel; pings of one partition stay sequential.
+    WORKER_PARTITION_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+    // Attempts for a ping that fails with a non-transient error before it goes to the dead letter topic.
+    WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
+    // A gap between two pings longer than this ends the previous presence ("stale session", SPEC §3.8).
+    PRESENCE_TTL_MS: z.coerce.number().int().positive().default(900_000),
+    // How long the cached presence state of a user lives in Redis; must exceed PRESENCE_TTL_MS so the
+    // last ping time is still known when a stale session has to be detected.
+    PRESENCE_STATE_TTL_MS: z.coerce.number().int().positive().default(86_400_000),
+    // Full reload of the in-memory area index, the safety net behind area.created events.
+    AREA_INDEX_REFRESH_MS: z.coerce.number().int().min(1_000).default(60_000),
+  })
+  .refine((env) => env.PRESENCE_STATE_TTL_MS > env.PRESENCE_TTL_MS, {
+    // Otherwise the last ping time expires together with the session and stale sessions go unnoticed.
+    message: 'must be greater than PRESENCE_TTL_MS',
+    path: ['PRESENCE_STATE_TTL_MS'],
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

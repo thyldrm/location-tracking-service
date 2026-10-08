@@ -2,6 +2,7 @@ import { type DynamicModule, Module } from '@nestjs/common';
 import type { RootModuleOptions } from './api.module.js';
 import type { Env } from './core/config/env.schema.js';
 import { CoreModule } from './core/core.module.js';
+import { EntryDetectionModule } from './modules/entry-detection/entry-detection.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 
 /**
@@ -16,6 +17,7 @@ export class WorkerModule {
       imports: [
         CoreModule.forRoot(env, { role: 'worker', destination: options.logDestination }),
         HealthModule,
+        EntryDetectionModule,
       ],
     };
   }

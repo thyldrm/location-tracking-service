@@ -94,7 +94,7 @@ describe('LocationsService', () => {
       'content-type': 'application/json',
       'schema-version': '1',
     });
-    expect(JSON.parse(message.value)).toEqual({
+    expect(JSON.parse(String(message.value))).toEqual({
       pingId: PING_ID,
       userId: 'u-42',
       latitude: 40.995,

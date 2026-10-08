@@ -3,8 +3,9 @@ import type { Topic } from './topics.js';
 /** A message ready to be published: key, serialized value and headers. */
 export type OutgoingMessage = {
   /** Messages with the same key go to the same partition and keep their order. */
-  key: string;
-  value: string;
+  key: string | null;
+  /** Usually JSON text; raw bytes when a message is forwarded unchanged (dead letter topic). */
+  value: string | Buffer;
   headers: Record<string, string>;
 };
 
