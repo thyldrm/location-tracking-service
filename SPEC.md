@@ -284,16 +284,47 @@ cursor.
 
 ### 5.4 `GET /logs`
 
-Lists area entries, newest `enteredAt` first, keyset-paginated.
+Lists area entries, newest `enteredAt` first, keyset-paginated on `(enteredAt DESC, id DESC)`
+([ADR 0009](docs/adr/0009-logs-query-design.md)).
 
-Query: `userId`, `areaId`, `from`, `to` (ISO 8601, filter on `enteredAt`, `from` inclusive, `to` exclusive),
-`limit` (1–500, default 50), `cursor`.
+Query (all optional, combinable):
 
-Item:
+| Parameter | Rule                                                                                                     |
+| --------- | -------------------------------------------------------------------------------------------------------- |
+| `userId`  | Same rule as in `POST /locations`                                                                        |
+| `areaId`  | UUID                                                                                                     |
+| `from`    | ISO 8601 with offset; `enteredAt >= from` (inclusive). In a URL, `+03:00` must be encoded as `%2B03:00`. |
+| `to`      | ISO 8601 with offset; `enteredAt < to` (exclusive); must be later than `from`                            |
+| `limit`   | 1–500, default 50                                                                                        |
+| `cursor`  | Opaque, from the previous page, valid only with the same filters                                         |
+
+Response:
 
 ```json
-{ "id": "…", "userId": "u-42", "areaId": "…", "enteredAt": "…", "exitedAt": null, "createdAt": "…" }
+{
+  "data": [
+    {
+      "id": "…",
+      "userId": "u-42",
+      "areaId": "…",
+      "enteredAt": "2026-10-08T12:00:00.000Z",
+      "exitedAt": null,
+      "createdAt": "…"
+    }
+  ],
+  "page": { "nextCursor": "eyJ…", "limit": 50 }
+}
 ```
+
+- `exitedAt` is `null` while the user is inside the area. `enteredAt` and `exitedAt` are client times, `createdAt` is
+  server time.
+- `nextCursor` is `null` on the last page. There is no total count.
+- A cursor replayed with different filters (`userId`, `areaId`, `from`, `to`) → `400` on `cursor`. Changing `limit`
+  is allowed.
+- Invalid or unknown parameters → `400` listing every offending field.
+- Filters that match nothing, including an `areaId` that does not exist → `200` with an empty `data`.
+- Every combination of filters is served by one of the three `area_entries` indexes (§7), verified by a query plan
+  test.
 
 ### 5.5 Operational endpoints
 
@@ -590,7 +621,7 @@ Housekeeping (worker role), at startup and every `HOUSEKEEPING_INTERVAL_MS` (def
 | 4   | Kafka module + `POST /locations` + rate limiting                  | done    |
 | 5   | Worker: area index, entry detection, retries, DLQ                 | done    |
 | 6   | Outbox relay + area index refresh                                 | done    |
-| 7   | `GET /logs`                                                       | planned |
+| 7   | `GET /logs`                                                       | done    |
 | 8   | Health, metrics, graceful shutdown                                | planned |
 | 9   | Integration / e2e / load tests                                    | planned |
 | 10  | README, ADRs, CI, Kubernetes manifests                            | planned |
