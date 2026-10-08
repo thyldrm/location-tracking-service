@@ -32,15 +32,16 @@ curl http://localhost:3000/metrics
 
 ## Scripts
 
-| Command                                              | Purpose                                                    |
-| ---------------------------------------------------- | ---------------------------------------------------------- |
-| `npm run build`                                      | Compile to `dist/`                                         |
-| `npm run lint` / `npm run typecheck`                 | Static checks                                              |
-| `npm test`                                           | Unit tests (no infrastructure needed)                      |
-| `npm run test:integration`                           | Integration and e2e tests against real containers (Docker) |
-| `npm run migration:run` / `npm run migration:revert` | Apply pending migrations / revert the latest one           |
-| `npm run topics:provision`                           | Create missing Kafka topics                                |
-| `npm run format`                                     | Format with Prettier                                       |
+| Command                                              | Purpose                                                                    |
+| ---------------------------------------------------- | -------------------------------------------------------------------------- |
+| `npm run build`                                      | Compile to `dist/`                                                         |
+| `npm run lint` / `npm run typecheck`                 | Static checks                                                              |
+| `npm test`                                           | Unit tests (no infrastructure needed)                                      |
+| `npm run test:integration`                           | Integration and e2e tests against real containers (Docker)                 |
+| `npm run migration:run` / `npm run migration:revert` | Apply pending migrations / revert the latest one                           |
+| `npm run topics:provision`                           | Create missing Kafka topics                                                |
+| `npm run format`                                     | Format with Prettier                                                       |
+| `docker compose run --rm k6 run /load/ingest.js`     | Load test of ingestion against the compose stack ([load/](load/README.md)) |
 
 ## Technical choices
 
@@ -53,7 +54,7 @@ curl http://localhost:3000/metrics
 | ORM                 | TypeORM                                                       | Maps PostGIS geometry columns natively (Prisma needs raw SQL for them) and gives explicit transaction control.                                                                                                                                   |
 | Kafka producer      | Idempotent, `acks=all`, 5 ms linger, bounded queue            | `202` means the ping is on every in-sync replica. A full queue or a broker timeout answers `503` instead of growing memory. The API starts and serves other endpoints while Kafka is down. ([ADR 0006](docs/adr/0006-ingestion-path.md))         |
 | Message broker      | Apache Kafka                                                  | Pings keyed by `userId` stay ordered per user, consumers scale through consumer groups, and retained messages can be replayed. RabbitMQ and BullMQ cannot keep per-user ordering with competing consumers as easily.                             |
-| Rate limiting       | Fixed-window counter per user in Redis, fails open            | One atomic round trip, shared by all API instances. A Redis outage must not stop ingestion, so requests are allowed while Redis is unavailable. ([ADR 0006](docs/adr/0006-ingestion-path.md))                                                    |
+| Rate limiting       | Fixed-window counter per user in Redis, fails open            | One atomic Lua script per ping, shared by all API instances. A Redis outage must not stop ingestion, so requests are allowed while Redis is unavailable. ([ADR 0006](docs/adr/0006-ingestion-path.md))                                           |
 | Cache               | Redis                                                         | Hot per-user presence state and per-user rate limits. It is never the source of truth: losing Redis slows the service down but loses no data.                                                                                                    |
 | Worker failures     | Back-off for transient errors, dead letter topic for the rest | A database outage pauses processing (lag grows, nothing is lost); a poison message never blocks a partition. ([ADR 0007](docs/adr/0007-worker-processing.md))                                                                                    |
 | Hot-path geometry   | In-memory R-tree (`flatbush`) + exact point-in-polygon        | Areas are few and change rarely, pings are many: point-in-polygon runs without a database round trip. PostgreSQL remains the source of truth.                                                                                                    |
@@ -69,6 +70,7 @@ curl http://localhost:3000/metrics
 | Readiness           | Process state only (starting, draining)                       | A shared dependency outage hits every instance; failing readiness everywhere would also take down the endpoints that do not need it. ([ADR 0010](docs/adr/0010-operability.md))                                                                  |
 | Kafka outage        | Circuit breaker on publishing pings                           | After 5 timeouts, `503` within milliseconds instead of a 3 s wait per request; one trial request every 5 s. ([ADR 0010](docs/adr/0010-operability.md))                                                                                           |
 | Shutdown            | Drain (readiness 503, keep serving 5 s), then close, 25 s cap | Rolling deployments drop no request; consumers commit offsets before the producer and pools close. ([ADR 0010](docs/adr/0010-operability.md))                                                                                                    |
+| Capacity            | ~1,000 pings/s per API instance (one core); scale out         | Measured with a k6 load test: one instance meets the latency target up to ~1,100 pings/s, two instances twice that; one worker processes ~10,000 pings/s. ([ADR 0011](docs/adr/0011-load-test-and-capacity.md))                                  |
 | Logging             | Structured JSON to stdout (pino)                              | 12-factor: the platform collects and ships logs; the service writes no log files. ([ADR 0004](docs/adr/0004-errors-correlation-and-logging.md))                                                                                                  |
 | Errors              | RFC 9457 Problem Details from one global filter               | Standard, machine-readable error types; internal details are logged, never returned.                                                                                                                                                             |
 | Request correlation | `x-request-id` + AsyncLocalStorage                            | One id follows a request through logs, Kafka headers and outbox events, without request-scoped providers.                                                                                                                                        |
@@ -111,6 +113,7 @@ These matter in production, but this implementation leaves them out on purpose:
 
 - [SPEC.md](SPEC.md) — behaviour, API and messaging contracts, data model, failure modes
 - [docs/adr/](docs/adr/) — architecture decision records
+- [load/](load/README.md) — load tests and how to read their results
 
 ## Status
 

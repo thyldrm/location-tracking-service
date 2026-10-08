@@ -46,7 +46,8 @@ created with 24 partitions, the upper bound on worker parallelism.
 
 ### Rate limiting: fixed window in Redis, failing open
 
-One `MULTI` with `INCR`, `PEXPIRE … NX` and `PTTL`: atomic, one round trip, shared by all API instances. A fixed
+One Lua script with `INCR`, `PEXPIRE … NX` and `PTTL`: atomic, one command, shared by all API instances (first a
+`MULTI` transaction; replaced after the load test, [ADR 0011](0011-load-test-and-capacity.md)). A fixed
 window allows a burst of up to twice the limit across a window boundary; for a limit of 10 pings per 10 s against an
 expected 2, this is acceptable and much simpler than a sliding window or token bucket.
 

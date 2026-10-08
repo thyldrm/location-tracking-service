@@ -25,6 +25,7 @@ npm run migration:revert # build, then revert the most recent migration
 npm run topics:provision # build, then create missing Kafka topics
 docker compose up -d     # PostgreSQL/PostGIS, Kafka, Redis
 docker compose --profile app up -d --build   # infrastructure + migrations + topics + api + worker containers
+docker compose run --rm k6 run /load/ingest.js   # load test of ingestion against the running stack (load/README.md)
 ```
 
 ## Architecture map
@@ -84,6 +85,9 @@ docker compose --profile app up -d --build   # infrastructure + migrations + top
   user input. Count what actually happened (e.g. entries written), not what was attempted.
 - **Readiness:** only process state (startup gates via `ProcessLifecycle.addReadinessGate`, draining) decides
   `/health/ready`; shared dependencies are reported, not checked for readiness (ADR 0010).
+- **Hot path:** code that runs on every request (middleware, guards, pipes, hooks) bounds the capacity of an API
+  instance (ADR 0011). Keep it free of per-request dynamic imports and avoidable round trips; measure changes to it
+  with the load test.
 - **Optional dependencies:** Redis is never required for correctness: code that uses it must degrade (fail open)
   when it is unavailable. Kafka is required for ingestion only; the process must start and serve other endpoints
   without it.

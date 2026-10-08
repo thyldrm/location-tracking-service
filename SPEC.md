@@ -613,6 +613,9 @@ Housekeeping (worker role), at startup and every `HOUSEKEEPING_INTERVAL_MS` (def
 
 - **Latency:** `POST /locations` p99 < 50 ms at target load (excluding network).
 - **Freshness:** ping → entry visible p99 < 1 s under normal load.
+- **Capacity:** one API instance (one CPU core) sustains about 1,100 pings/s within both targets; the target load
+  is reached by scaling out (plan with 1,000 pings/s per instance). One worker processes about 10,000 pings/s.
+  Measured with the k6 load test in `load/` ([ADR 0011](docs/adr/0011-load-test-and-capacity.md)).
 - **Graceful shutdown:** on `SIGTERM` the API fails readiness and keeps serving for `SHUTDOWN_DRAIN_DELAY_MS`
   (default 5 s) so the load balancer stops routing to it, then stops accepting connections and finishes requests in
   progress. Both roles then stop the consumers (offsets committed), the relay and housekeeping, flush the producer and
@@ -666,5 +669,5 @@ Housekeeping (worker role), at startup and every `HOUSEKEEPING_INTERVAL_MS` (def
 | 6   | Outbox relay + area index refresh                                 | done    |
 | 7   | `GET /logs`                                                       | done    |
 | 8   | Health, metrics, graceful shutdown                                | done    |
-| 9   | Integration / e2e / load tests                                    | planned |
+| 9   | Integration / e2e / load tests                                    | done    |
 | 10  | README, ADRs, CI, Kubernetes manifests                            | planned |
