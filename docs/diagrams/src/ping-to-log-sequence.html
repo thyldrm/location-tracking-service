@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>From ping to log entry</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #eb6c36;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 3rem 2rem; }
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.5rem; }
+    h1 { font-family: var(--font-serif); font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem); font-weight: 400; letter-spacing: -0.02em; line-height: 1.15; color: var(--color-ink); margin-bottom: 1.5rem; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .cards { display: flex; gap: 1rem; margin-top: 1.5rem; flex-wrap: wrap; }
+    .card { background: #fff; border: 1px solid rgba(45,49,66,0.12); border-radius: 6px; padding: 1rem 1.1rem; min-width: 220px; }
+    .card h3 { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.4rem; }
+    .card p { font-size: 0.85rem; line-height: 1.5; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Sequence · Diagram Design</p>
+    <h1>From ping to log entry</h1>
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 616" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ping-sequence-title ping-sequence-desc">
+        <title id="ping-sequence-title">From ping to log entry</title>
+        <desc id="ping-sequence-desc">A ping is acknowledged once Kafka has it; the worker consumes it asynchronously and writes PostgreSQL only when the user's areas change.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+          <marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+<line x1="100" y1="80" x2="100" y2="548" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="300" y1="80" x2="300" y2="548" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="500" y1="80" x2="500" y2="548" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="700" y1="80" x2="700" y2="548" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="880" y1="80" x2="880" y2="548" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="660" y="404" width="256" height="84" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<rect x="660" y="404" width="40" height="16" rx="2" fill="#f5f5f5" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<text x="680" y="416" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">OPT</text>
+<text x="708" y="416" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">[state changed]</text>
+<path d="M306,144 H336 Q344,144 344,152 V160 Q344,168 336,168 H306" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="352" y="150" width="107" height="12" rx="2" fill="#f5f5f5"/>
+<text x="357" y="159" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">rate limit (Redis)</text>
+<path d="M706,372 H736 Q744,372 744,380 V388 Q744,396 736,396 H706" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="752" y="378" width="118" height="12" rx="2" fill="#f5f5f5"/>
+<text x="757" y="387" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">R-tree + Redis state</text>
+<line x1="106" y1="116" x2="294" y2="116" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<line x1="306" y1="212" x2="494" y2="212" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="494" y1="244" x2="306" y2="244" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+<line x1="294" y1="276" x2="106" y2="276" stroke="#eb6c36" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-accent)"/>
+<line x1="694" y1="316" x2="506" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="506" y1="348" x2="694" y2="348" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+<line x1="706" y1="444" x2="874" y2="444" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<line x1="874" y1="476" x2="706" y2="476" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+<line x1="694" y1="520" x2="506" y2="520" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-open)"/>
+<rect x="154" y="96" width="93" height="12" rx="2" fill="#f5f5f5"/>
+<text x="200.0" y="105" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">POST /locations</text>
+<rect x="346" y="192" width="109" height="12" rx="2" fill="#f5f5f5"/>
+<text x="400.0" y="201" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">produce key=userId</text>
+<rect x="356" y="224" width="88" height="12" rx="2" fill="#f5f5f5"/>
+<text x="400.0" y="233" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">ack (acks=all)</text>
+<rect x="162" y="256" width="77" height="12" rx="2" fill="#f5f5f5"/>
+<text x="200.0" y="265" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">202 Accepted</text>
+<rect x="546" y="296" width="109" height="12" rx="2" fill="#f5f5f5"/>
+<text x="600.0" y="305" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">poll (&lt;=500 pings)</text>
+<rect x="580" y="328" width="39" height="12" rx="2" fill="#f5f5f5"/>
+<text x="600.0" y="337" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">batch</text>
+<rect x="724" y="424" width="131" height="12" rx="2" fill="#f5f5f5"/>
+<text x="790.0" y="433" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">INSERT/DELETE + outbox</text>
+<rect x="768" y="456" width="44" height="12" rx="2" fill="#f5f5f5"/>
+<text x="790.0" y="465" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">commit</text>
+<rect x="559" y="500" width="82" height="12" rx="2" fill="#f5f5f5"/>
+<text x="600.0" y="509" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">commit offset</text>
+<rect x="28" y="24" width="144" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="28" y="24" width="144" height="56" rx="6" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<rect x="36" y="30" width="36" height="12" rx="2" fill="transparent" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="54.0" y="39" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ACTOR</text>
+<text x="100.0" y="62" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Client</text>
+<text x="100.0" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">mobile app</text>
+<rect x="228" y="24" width="144" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="228" y="24" width="144" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="236" y="30" width="36" height="12" rx="2" fill="transparent" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="254.0" y="39" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ACTOR</text>
+<text x="300.0" y="62" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">API role</text>
+<text x="300.0" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">stateless</text>
+<rect x="428" y="24" width="144" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="428" y="24" width="144" height="56" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<rect x="436" y="30" width="36" height="12" rx="2" fill="transparent" stroke="#eb6c36" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="454.0" y="39" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ACTOR</text>
+<text x="500.0" y="62" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Kafka</text>
+<text x="500.0" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">location.pings.v1</text>
+<rect x="628" y="24" width="144" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="628" y="24" width="144" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="636" y="30" width="36" height="12" rx="2" fill="transparent" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="654.0" y="39" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ACTOR</text>
+<text x="700.0" y="62" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Worker role</text>
+<text x="700.0" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">entry-detector</text>
+<rect x="808" y="24" width="144" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="808" y="24" width="144" height="56" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<rect x="816" y="30" width="36" height="12" rx="2" fill="transparent" stroke="#4f5d75" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="834.0" y="39" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ACTOR</text>
+<text x="880.0" y="62" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PostgreSQL</text>
+<text x="880.0" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">entries · outbox</text>
+<line x1="30" y1="568" x2="930" y2="568" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="30" y="584" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+<line x1="110" y1="581" x2="128" y2="581" stroke="#4f5d75" stroke-width="1.2"/>
+<text x="134" y="584" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">call</text>
+<line x1="184" y1="581" x2="202" y2="581" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="4,3"/>
+<text x="208" y="584" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">return</text>
+<line x1="270" y1="581" x2="288" y2="581" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="4,3"/>
+<text x="294" y="584" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">async</text>
+<line x1="350" y1="581" x2="368" y2="581" stroke="#eb6c36" stroke-width="1.2"/>
+<text x="374" y="584" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">headline</text>
+<rect x="447" y="576" width="16" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="471" y="584" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">decoupling point</text>
+
+      </svg>
+    </div>
+    <div class="cards"><div class="card" style="flex:1.1"><h3>Two latencies</h3><p>The client waits for the Kafka ack only (p99 target 50 ms). The entry becomes visible in GET /logs after the worker transaction (p99 target 1 s).</p></div><div class="card" style="flex:1.0"><h3>Most pings stop early</h3><p>If the area set did not change, the worker updates Redis and nothing else: the OPT fragment is skipped.</p></div><div class="card" style="flex:0.9"><h3>Offsets</h3><p>Offsets are committed after a batch completes, so a crash replays pings; idempotent writes absorb them.</p></div></div>
+  </div>
+</body>
+</html>
