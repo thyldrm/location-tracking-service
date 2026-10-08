@@ -53,6 +53,9 @@ docker compose run --rm k6 run /load/ingest.js   # load test of ingestion agains
 - **Errors:** throw `AppError` subclasses from `src/core/errors/app-errors.ts` (`NotFoundError`, `ConflictError`, ...).
   `ProblemDetailsFilter` renders every error as RFC 9457 problem details; never build error responses by hand and
   never leak internal error messages or stack traces to clients. New mappings go into `resolveProblem` with a test.
+- **API documentation:** every HTTP operation is listed in `apiOperations` (`src/modules/docs/api-operations.ts`),
+  with the schemas its handler validates with and a strict schema per response. The OpenAPI document is generated
+  from it; `test/openapi.e2e-spec.ts` fails when a route or a response is not documented.
 - **Validation:** validate every request input with a Zod schema through `ZodValidationPipe`
   (`@Body(new ZodValidationPipe(schema))`); handlers receive the parsed output only. A pipe that needs configuration is
   an `@Injectable()` subclass passed by class (`@Body(CreateAreaValidationPipe)`).

@@ -41,6 +41,8 @@ export const envSchema = z
     HTTP_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
     HTTP_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
     HTTP_TRUST_PROXY: booleanString.default(false),
+    // API documentation (GET /docs); unset means enabled everywhere except in production.
+    OPENAPI_ENABLED: booleanString.optional(),
     // On SIGTERM: keep serving this long with readiness failing, so the load balancer stops routing here ...
     SHUTDOWN_DRAIN_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(5_000),
     // ... and give up (exit 1) if the whole shutdown takes longer than this. Keep it below the
@@ -128,7 +130,11 @@ export const envSchema = z
     // (and the relay's lock) before a slow acknowledgement arrived.
     message: 'must be less than DB_IDLE_IN_TRANSACTION_TIMEOUT_MS',
     path: ['KAFKA_DELIVERY_TIMEOUT_MS'],
-  });
+  })
+  .transform((env) => ({
+    ...env,
+    OPENAPI_ENABLED: env.OPENAPI_ENABLED ?? env.NODE_ENV !== 'production',
+  }));
 
 export type Env = z.infer<typeof envSchema>;
 

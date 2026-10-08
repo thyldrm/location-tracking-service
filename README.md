@@ -28,6 +28,7 @@ docker compose --profile app up -d --build
 curl http://localhost:3000/health/live   # Windows PowerShell 5.1: curl.exe
 curl http://localhost:3000/health/ready
 curl http://localhost:3000/metrics
+# API documentation (Swagger UI): http://localhost:3000/docs
 ```
 
 ## Scripts

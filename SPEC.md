@@ -331,12 +331,16 @@ Response:
 Public (no API key), for the orchestrator and the monitoring system; not routed through the public gateway.
 ([ADR 0010](docs/adr/0010-operability.md))
 
-| Endpoint            | Purpose                                                                                              |
-| ------------------- | ---------------------------------------------------------------------------------------------------- |
-| `GET /health/live`  | Liveness: `200` while the event loop responds. Checks no dependency.                                 |
-| `GET /health/ready` | Readiness: `200` when this process should get traffic, `503` while starting or draining (see below). |
-| `GET /metrics`      | Prometheus metrics (§11).                                                                            |
-| `GET /docs`         | OpenAPI UI (disabled when `NODE_ENV=production` unless `OPENAPI_ENABLED=true`). Not implemented yet. |
+| Endpoint            | Purpose                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /health/live`  | Liveness: `200` while the event loop responds. Checks no dependency.                                                                 |
+| `GET /health/ready` | Readiness: `200` when this process should get traffic, `503` while starting or draining (see below).                                 |
+| `GET /metrics`      | Prometheus metrics (§11).                                                                                                            |
+| `GET /docs`         | Swagger UI; the OpenAPI 3.1 document is `GET /docs/openapi.json`. Disabled when `NODE_ENV=production` unless `OPENAPI_ENABLED=true`. |
+
+The OpenAPI document is generated from the Zod schemas that validate the requests, and from strict schemas of
+the responses. A contract test checks it against the running application: every route is documented, and real
+responses match their documented status, headers and body.
 
 Readiness response:
 

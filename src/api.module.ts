@@ -5,6 +5,7 @@ import { CoreModule } from './core/core.module.js';
 import { SecurityModule } from './core/security/security.module.js';
 import { AreaEntriesModule } from './modules/area-entries/area-entries.module.js';
 import { AreasModule } from './modules/areas/areas.module.js';
+import { DocsModule } from './modules/docs/docs.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { LocationsModule } from './modules/locations/locations.module.js';
 
@@ -29,6 +30,7 @@ export class ApiModule {
         AreasModule,
         LocationsModule,
         AreaEntriesModule,
+        ...(env.OPENAPI_ENABLED ? [DocsModule] : []),
       ],
     };
   }

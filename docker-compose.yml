@@ -22,6 +22,8 @@ x-app: &app
     API_KEYS: local-development-api-key-change-me-0123456789
     HTTP_HOST: 0.0.0.0
     HTTP_PORT: '3000'
+    # A local demo stack: keep the API documentation (GET /docs) although NODE_ENV is production.
+    OPENAPI_ENABLED: 'true'
     POSTGRES_HOST: postgres
     POSTGRES_PORT: '5432'
     POSTGRES_USER: location

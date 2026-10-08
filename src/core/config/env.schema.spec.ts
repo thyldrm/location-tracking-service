@@ -113,6 +113,17 @@ describe('validateEnv', () => {
     ).toThrow(/SHUTDOWN_DRAIN_DELAY_MS/);
   });
 
+  it('enables the API documentation by default except in production', () => {
+    expect(validateEnv(requiredVariables).OPENAPI_ENABLED).toBe(true);
+    expect(validateEnv({ ...requiredVariables, NODE_ENV: 'production' }).OPENAPI_ENABLED).toBe(
+      false,
+    );
+    expect(
+      validateEnv({ ...requiredVariables, NODE_ENV: 'production', OPENAPI_ENABLED: 'true' })
+        .OPENAPI_ENABLED,
+    ).toBe(true);
+  });
+
   it('throws a readable error listing every invalid variable', () => {
     const error = captureError(() =>
       validateEnv({ ...requiredVariables, HTTP_PORT: 'not-a-port', LOG_LEVEL: 'verbose' }),
