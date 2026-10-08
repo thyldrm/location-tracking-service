@@ -11,6 +11,7 @@ import { Clock } from '../../core/foundation/clock.js';
 import { IdGenerator } from '../../core/foundation/id-generator.js';
 import { MessageProducer, PublishError } from '../../core/messaging/message-producer.js';
 import { Topics } from '../../core/messaging/topics.js';
+import { Metrics } from '../../core/metrics/metrics.js';
 import { RateLimiter, type RateLimitPolicy } from '../../core/rate-limit/rate-limiter.js';
 import type { LocationPingInput } from './location.schemas.js';
 import { PING_SCHEMA_VERSION, type PingMessage } from './ping-message.js';
@@ -34,6 +35,7 @@ export class LocationsService {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly requestContext: RequestContext,
+    private readonly metrics: Metrics,
   ) {
     this.maxFutureSkewMs = config.get('PING_MAX_FUTURE_SKEW_MS', { infer: true });
     this.maxAgeMs = config.get('PING_MAX_AGE_MS', { infer: true });
@@ -49,6 +51,7 @@ export class LocationsService {
 
     const decision = await this.rateLimiter.consume(`pings:${ping.userId}`, this.rateLimit);
     if (!decision.allowed) {
+      this.metrics.pingsRejected.inc({ reason: 'rate-limited' });
       throw new TooManyRequestsError(
         'Too many location pings for this user.',
         Math.ceil(decision.retryAfterMs / 1000),
@@ -79,6 +82,7 @@ export class LocationsService {
       });
     } catch (error) {
       if (error instanceof PublishError) {
+        this.metrics.pingsRejected.inc({ reason: 'unavailable' });
         // A full local queue clears quickly; an unreachable broker usually takes longer.
         const retryAfterSeconds = error.reason === 'queue-full' ? 1 : 5;
         throw new ServiceUnavailableError(
@@ -90,6 +94,7 @@ export class LocationsService {
       throw error;
     }
 
+    this.metrics.pingsAccepted.inc();
     return { pingId, status: 'accepted' };
   }
 

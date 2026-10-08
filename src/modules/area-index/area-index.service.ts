@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Repository } from 'typeorm';
 import type { Env } from '../../core/config/env.schema.js';
+import { Metrics } from '../../core/metrics/metrics.js';
 import { AreaEntity } from '../areas/area.entity.js';
 import { AreaIndex, type IndexedArea } from './area-index.js';
 
@@ -40,6 +41,7 @@ export class AreaIndexService implements OnApplicationBootstrap, OnApplicationSh
     @InjectRepository(AreaEntity) private readonly repository: Repository<AreaEntity>,
     private readonly config: ConfigService<Env, true>,
     @InjectPinoLogger(AreaIndexService.name) private readonly logger: PinoLogger,
+    private readonly metrics: Metrics,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -85,6 +87,8 @@ export class AreaIndexService implements OnApplicationBootstrap, OnApplicationSh
       this.areas = new Map(areas.map((area) => [area.id, area]));
       this.index = AreaIndex.build([...this.areas.values()]);
       this.ready.resolve();
+      this.metrics.areaIndexAreas.set(this.areas.size);
+      this.metrics.areaIndexLastLoad.setToCurrentTime();
       this.logger.info(
         { areas: areas.length, durationMs: Math.round(performance.now() - startedAt) },
         'Area index loaded',
@@ -114,6 +118,7 @@ export class AreaIndexService implements OnApplicationBootstrap, OnApplicationSh
         return Promise.resolve(0);
       }
       this.index = AreaIndex.build([...this.areas.values()]);
+      this.metrics.areaIndexAreas.set(this.areas.size);
       this.logger.info(
         { added: added.map((area) => area.id), areas: this.areas.size },
         'Areas added to the index from events',

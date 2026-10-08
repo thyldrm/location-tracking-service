@@ -3,6 +3,7 @@ import type { Polygon } from 'geojson';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Repository } from 'typeorm';
 import type { Env } from '../../core/config/env.schema.js';
+import { Metrics } from '../../core/metrics/metrics.js';
 import type { AreaEntity } from '../areas/area.entity.js';
 import type { IndexedArea } from './area-index.js';
 import { AreaIndexService } from './area-index.service.js';
@@ -53,7 +54,7 @@ function controlledTable() {
 
 async function loadedService(areas: IndexedArea[]) {
   const table = controlledTable();
-  const service = new AreaIndexService(table.repository, config, silentLogger);
+  const service = new AreaIndexService(table.repository, config, silentLogger, new Metrics('test'));
   const loading = service.reload();
   (await table.read(0)).resolve(areas);
   await loading;
@@ -111,7 +112,12 @@ describe('AreaIndexService', () => {
 
   it('ignores events before the first load, which reads every area anyway', async () => {
     const table = controlledTable();
-    const service = new AreaIndexService(table.repository, config, silentLogger);
+    const service = new AreaIndexService(
+      table.repository,
+      config,
+      silentLogger,
+      new Metrics('test'),
+    );
 
     expect(await service.add([NEW])).toBe(0);
     expect(service.isReady()).toBe(false);

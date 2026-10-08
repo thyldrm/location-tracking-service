@@ -5,8 +5,10 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Env } from '../../core/config/env.schema.js';
 import { RequestContext } from '../../core/context/request-context.js';
 import { isTransientError } from '../../core/errors/transient-errors.js';
+import { Clock } from '../../core/foundation/clock.js';
 import { MessageProducer } from '../../core/messaging/message-producer.js';
 import { Topics } from '../../core/messaging/topics.js';
+import { Metrics } from '../../core/metrics/metrics.js';
 import {
   PING_SCHEMA_VERSION,
   type PingMessage,
@@ -59,6 +61,8 @@ export class PingBatchHandler {
     private readonly requestContext: RequestContext,
     config: ConfigService<Env, true>,
     @InjectPinoLogger(PingBatchHandler.name) private readonly logger: PinoLogger,
+    private readonly clock: Clock,
+    private readonly metrics: Metrics,
   ) {
     this.maxAttempts = config.get('WORKER_MAX_ATTEMPTS', { infer: true });
   }
@@ -98,7 +102,14 @@ export class PingBatchHandler {
     for (let attempt = 1; ; attempt++) {
       try {
         // The ping's correlation id (from the API request) follows it into logs and outbox events.
-        await this.requestContext.run(correlationId, () => this.processor.process(ping));
+        const outcome = await this.requestContext.run(correlationId, () =>
+          this.processor.process(ping),
+        );
+        this.metrics.pingsProcessed.inc({ outcome });
+        // Freshness as the user experiences it: from the API accepting the ping to its processing.
+        this.metrics.pingProcessingDelay.observe(
+          (this.clock.now().getTime() - Date.parse(ping.receivedAt)) / 1000,
+        );
         return;
       } catch (error) {
         if (isTransientError(error)) {
@@ -162,6 +173,7 @@ export class PingBatchHandler {
         'x-original-offset': message.offset,
       },
     });
+    this.metrics.pingsDeadLettered.inc({ reason });
     this.logger.error(
       { reason, error, partition: message.partition, offset: message.offset },
       'Ping sent to the dead letter topic',

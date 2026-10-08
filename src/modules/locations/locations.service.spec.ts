@@ -1,4 +1,5 @@
 import type { ConfigService } from '@nestjs/config';
+import { Metrics, metricValue } from '../../core/metrics/metrics.js';
 import type { Env } from '../../core/config/env.schema.js';
 import type { RequestContext } from '../../core/context/request-context.js';
 import {
@@ -55,6 +56,7 @@ class FixedRateLimiter extends RateLimiter {
 }
 
 function setup() {
+  const metrics = new Metrics('test');
   const producer = new RecordingProducer();
   const rateLimiter = new FixedRateLimiter();
   const service = new LocationsService(
@@ -64,8 +66,9 @@ function setup() {
     { next: () => PING_ID },
     { now: () => NOW },
     { correlationId: 'request-7' } as RequestContext,
+    metrics,
   );
-  return { service, producer, rateLimiter };
+  return { service, producer, rateLimiter, metrics };
 }
 
 const ping = (timestamp: Date) => ({
@@ -77,11 +80,12 @@ const ping = (timestamp: Date) => ({
 
 describe('LocationsService', () => {
   it('publishes the ping keyed by user id with correlation headers', async () => {
-    const { service, producer, rateLimiter } = setup();
+    const { service, producer, rateLimiter, metrics } = setup();
 
     const result = await service.accept(ping(new Date('2026-10-08T11:59:58.000Z')));
 
     expect(result).toEqual({ pingId: PING_ID, status: 'accepted' });
+    expect(await metricValue(metrics.pingsAccepted)).toBe(1);
     expect(rateLimiter.calls).toEqual([
       { key: 'pings:u-42', policy: { limit: 10, windowMs: 10_000 } },
     ]);
@@ -129,7 +133,7 @@ describe('LocationsService', () => {
   });
 
   it('rejects a limited user with Retry-After rounded up to whole seconds', async () => {
-    const { service, producer, rateLimiter } = setup();
+    const { service, producer, rateLimiter, metrics } = setup();
     rateLimiter.decision = { allowed: false, retryAfterMs: 2_100 };
 
     const error: unknown = await service.accept(ping(NOW)).catch((caught: unknown) => caught);
@@ -137,6 +141,8 @@ describe('LocationsService', () => {
     expect(error).toBeInstanceOf(TooManyRequestsError);
     expect((error as TooManyRequestsError).headers).toEqual({ 'retry-after': '3' });
     expect(producer.published).toHaveLength(0);
+    expect(await metricValue(metrics.pingsRejected, { reason: 'rate-limited' })).toBe(1);
+    expect(await metricValue(metrics.pingsAccepted)).toBe(0);
   });
 
   it.each([

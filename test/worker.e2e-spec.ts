@@ -44,6 +44,26 @@ function square(minX: number, minY: number, size: number): Polygon {
   };
 }
 
+/**
+ * Value of one series in the Prometheus text format, matched by name and labels in any order (the
+ * worker's role label is implied). NaN if the series is absent.
+ */
+function sample(body: string, name: string, labels: Record<string, string> = {}): number {
+  const wanted = { role: 'worker', ...labels };
+  for (const line of body.split('\n')) {
+    const match = /^(\w+)\{(.*)\} (\S+)$/.exec(line);
+    if (!match || match[1] !== name) continue;
+    const present = Object.fromEntries(
+      [...(match[2] ?? '').matchAll(/(\w+)="([^"]*)"/g)].map(([, key, value]) => [key, value]),
+    );
+    const same =
+      Object.keys(present).length === Object.keys(wanted).length &&
+      Object.entries(wanted).every(([key, value]) => present[key] === value);
+    if (same) return Number(match[3]);
+  }
+  return Number.NaN;
+}
+
 const AREA_A = ids.next();
 const AREA_B = ids.next();
 const INSIDE_A = { longitude: 10.5, latitude: 10.5 };
@@ -102,6 +122,9 @@ describe('Worker: entry detection (e2e)', () => {
     });
     return pingId;
   };
+
+  const scrape = async (): Promise<string> =>
+    (await app.inject({ method: 'GET', url: '/metrics' })).body;
 
   const entriesOf = (userId: string): Promise<AreaEntryEntity[]> =>
     dataSource.getRepository(AreaEntryEntity).find({
@@ -299,5 +322,26 @@ describe('Worker: entry detection (e2e)', () => {
       () => entriesOf(userId),
       (rows) => rows.length === 1,
     );
+  });
+
+  it('reports processing, transitions, the relay and the area index in its metrics', async () => {
+    // Earlier tests recorded entries; wait until the relay has published at least one of them.
+    const body = await eventually(
+      scrape,
+      (text) => sample(text, 'outbox_events_published_total') > 0,
+    );
+
+    expect(
+      sample(body, 'location_pings_processed_total', { outcome: 'transition' }),
+    ).toBeGreaterThan(0);
+    expect(sample(body, 'area_transitions_total', { type: 'entered' })).toBeGreaterThan(0);
+    expect(
+      sample(body, 'location_pings_dead_lettered_total', { reason: 'invalid-message' }),
+    ).toBeGreaterThan(0);
+    expect(sample(body, 'location_ping_processing_delay_seconds_count')).toBeGreaterThan(0);
+    expect(sample(body, 'area_index_areas')).toBe(2);
+    // Read from the table at scrape time.
+    expect(sample(body, 'outbox_parked_events')).toBe(0);
+    expect(sample(body, 'outbox_oldest_unpublished_age_seconds')).toBeGreaterThanOrEqual(0);
   });
 });

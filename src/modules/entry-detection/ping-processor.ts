@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Env } from '../../core/config/env.schema.js';
+import { Metrics } from '../../core/metrics/metrics.js';
 import { AreaIndexService } from '../area-index/area-index.service.js';
 import type { PingMessage } from '../locations/ping-message.js';
 import { PresenceCache } from './presence-cache.js';
@@ -24,6 +25,7 @@ export class PingProcessor {
     private readonly store: PresenceStore,
     config: ConfigService<Env, true>,
     @InjectPinoLogger(PingProcessor.name) private readonly logger: PinoLogger,
+    private readonly metrics: Metrics,
   ) {
     this.presenceTtlMs = config.get('PRESENCE_TTL_MS', { infer: true });
   }
@@ -52,6 +54,9 @@ export class PingProcessor {
       at: timestamp,
     });
     await this.cache.set(ping.userId, evaluation.state);
+    // Only what was actually written counts: a duplicate entry absorbed by the database is not one.
+    this.metrics.areaTransitions.inc({ type: 'entered' }, recorded.entries);
+    this.metrics.areaTransitions.inc({ type: 'exited' }, recorded.exits);
     // No coordinates: location is personal data and stays out of the logs.
     this.logger.debug({ userId: ping.userId, ...recorded }, 'Presence changed');
     return 'transition';

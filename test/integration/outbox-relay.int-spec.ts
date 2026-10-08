@@ -9,6 +9,7 @@ import {
   PublishError,
   type PublishFailureReason,
 } from '../../src/core/messaging/message-producer.js';
+import { Metrics } from '../../src/core/metrics/metrics.js';
 import { type Topic, Topics } from '../../src/core/messaging/topics.js';
 import { OutboxEventEntity } from '../../src/modules/outbox/outbox-event.entity.js';
 import { OutboxRelay } from '../../src/modules/outbox/outbox-relay.js';
@@ -62,6 +63,7 @@ describe('OutboxRelay (integration)', () => {
       fake,
       { get: (key: keyof Env) => settings[key] } as ConfigService<Env, true>,
       silentLogger,
+      new Metrics('test'),
     );
 
   /** Inserts events with increasing created_at; returns their ids in that order. */

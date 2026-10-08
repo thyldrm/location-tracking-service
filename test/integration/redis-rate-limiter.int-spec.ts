@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import type { PinoLogger } from 'nestjs-pino';
+import { Metrics, metricValue } from '../../src/core/metrics/metrics.js';
 import { RedisRateLimiter } from '../../src/core/rate-limit/redis-rate-limiter.js';
 import { testEnv } from '../support/test-env.js';
 
@@ -19,7 +20,7 @@ describe('RedisRateLimiter (integration)', () => {
   });
 
   it('allows `limit` events per window, then reports the time left in the window', async () => {
-    const limiter = new RedisRateLimiter(redis, clock, silentLogger);
+    const limiter = new RedisRateLimiter(redis, clock, silentLogger, new Metrics('test'));
     const key = `test:${randomUUID()}`;
     const policy = { limit: 3, windowMs: 2_000 };
 
@@ -41,7 +42,7 @@ describe('RedisRateLimiter (integration)', () => {
   });
 
   it('starts a new window when the previous one expires', async () => {
-    const limiter = new RedisRateLimiter(redis, clock, silentLogger);
+    const limiter = new RedisRateLimiter(redis, clock, silentLogger, new Metrics('test'));
     const key = `test:${randomUUID()}`;
     const policy = { limit: 1, windowMs: 300 };
 
@@ -53,7 +54,7 @@ describe('RedisRateLimiter (integration)', () => {
   });
 
   it('keeps the window fixed: later events do not extend it', async () => {
-    const limiter = new RedisRateLimiter(redis, clock, silentLogger);
+    const limiter = new RedisRateLimiter(redis, clock, silentLogger, new Metrics('test'));
     const key = `test:${randomUUID()}`;
 
     await limiter.consume(key, { limit: 100, windowMs: 1_000 });
@@ -70,7 +71,8 @@ describe('RedisRateLimiter (integration)', () => {
       lazyConnect: true,
     });
     unreachable.on('error', () => undefined);
-    const limiter = new RedisRateLimiter(unreachable, clock, silentLogger);
+    const metrics = new Metrics('test');
+    const limiter = new RedisRateLimiter(unreachable, clock, silentLogger, metrics);
 
     try {
       await expect(limiter.consume('anyone', { limit: 1, windowMs: 1_000 })).resolves.toEqual({
@@ -79,6 +81,8 @@ describe('RedisRateLimiter (integration)', () => {
       await expect(limiter.consume('anyone', { limit: 1, windowMs: 1_000 })).resolves.toEqual({
         allowed: true,
       });
+      // Logged once a minute at most, but counted every time.
+      expect(await metricValue(metrics.rateLimiterFailOpen)).toBe(2);
     } finally {
       unreachable.disconnect();
     }

@@ -6,6 +6,34 @@ const LATENCY_BUCKETS = [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5
 /** Delay from accepting a ping to having processed it; up to minutes while a dependency is down. */
 const DELAY_BUCKETS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 900];
 
+type Readable = {
+  get(): Promise<{
+    values: Array<{
+      value: number;
+      labels: Partial<Record<string, string | number>>;
+      metricName?: string;
+    }>;
+  }>;
+};
+
+/**
+ * Current value of a counter or gauge series (or of a histogram's `_sum` / `_count` with `metricName`).
+ * For tests and diagnostics; Prometheus reads the registry instead.
+ */
+export async function metricValue(
+  metric: Readable,
+  labels: Record<string, string> = {},
+  metricName?: string,
+): Promise<number> {
+  const { values } = await metric.get();
+  const match = values.find(
+    (entry) =>
+      (metricName === undefined || entry.metricName === metricName) &&
+      Object.entries(labels).every(([name, value]) => entry.labels[name] === value),
+  );
+  return match?.value ?? 0;
+}
+
 /** Numeric value of `circuit_breaker_state`. */
 export const CircuitStateValue = { closed: 0, 'half-open': 1, open: 2 } as const;
 
@@ -41,7 +69,7 @@ export class Metrics {
 
   readonly pingsRejected = new Counter({
     name: 'location_pings_rejected_total',
-    help: 'Valid pings that were not accepted, by reason (rate_limited, unavailable, circuit_open).',
+    help: 'Valid pings that were not accepted, by reason (rate-limited, unavailable, circuit-open).',
     labelNames: ['reason'] as const,
     registers: [this.registry],
   });
@@ -62,7 +90,7 @@ export class Metrics {
   // ---- Entry detection (worker) ----
   readonly pingsProcessed = new Counter({
     name: 'location_pings_processed_total',
-    help: 'Pings processed by the worker, by outcome (unchanged, transition, out_of_order).',
+    help: 'Pings processed by the worker, by outcome (unchanged, transition, out-of-order).',
     labelNames: ['outcome'] as const,
     registers: [this.registry],
   });
@@ -76,7 +104,7 @@ export class Metrics {
 
   readonly pingsDeadLettered = new Counter({
     name: 'location_pings_dead_lettered_total',
-    help: 'Pings sent to the dead letter topic, by reason (invalid_message, processing_failed).',
+    help: 'Pings sent to the dead letter topic, by reason (invalid-message, processing-failed).',
     labelNames: ['reason'] as const,
     registers: [this.registry],
   });

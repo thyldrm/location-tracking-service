@@ -3,6 +3,7 @@ import type { PinoLogger } from 'nestjs-pino';
 import type { Env } from '../../core/config/env.schema.js';
 import type { RequestContext } from '../../core/context/request-context.js';
 import { MessageProducer, type OutgoingMessage } from '../../core/messaging/message-producer.js';
+import { Metrics, metricValue } from '../../core/metrics/metrics.js';
 import type { Topic } from '../../core/messaging/topics.js';
 import type { PingMessage } from '../locations/ping-message.js';
 import { type ConsumedMessage, PingBatchHandler } from './ping-batch-handler.js';
@@ -88,14 +89,19 @@ function setup() {
   } as unknown as RequestContext;
   const config = { get: () => 3 } as unknown as ConfigService<Env, true>;
   const logger = { warn: () => undefined, error: () => undefined } as unknown as PinoLogger;
+  const metrics = new Metrics('test');
+  // receivedAt of every test message is 12:00:00.100, so each ping is processed 0.5 s after acceptance.
+  const clock = { now: () => new Date('2026-10-08T12:00:00.600Z') };
   const handler = new PingBatchHandler(
     processor as unknown as PingProcessor,
     producer,
     requestContext,
     config,
     logger,
+    clock,
+    metrics,
   );
-  return { handler, processor, producer };
+  return { handler, processor, producer, metrics };
 }
 
 describe('PingBatchHandler', () => {
@@ -178,6 +184,26 @@ describe('PingBatchHandler', () => {
       'x-dlq-error': 'TypeError: boom',
       'x-dlq-attempts': '3',
     });
+  });
+
+  it('counts outcomes and dead letters and measures the delay since acceptance', async () => {
+    const { handler, processor, metrics } = setup();
+    processor.script('p2', bug, bug, bug);
+
+    await handler.handle([
+      message({ pingId: 'p1', userId: 'u1' }),
+      message({ pingId: 'p2', userId: 'u2' }),
+      message({ pingId: 'p3', userId: 'u3' }, { 'schema-version': '9' }),
+    ]);
+
+    expect(await metricValue(metrics.pingsProcessed, { outcome: 'unchanged' })).toBe(1);
+    expect(await metricValue(metrics.pingsDeadLettered, { reason: 'processing-failed' })).toBe(1);
+    expect(await metricValue(metrics.pingsDeadLettered, { reason: 'invalid-message' })).toBe(1);
+    const delay = metrics.pingProcessingDelay;
+    expect(await metricValue(delay, {}, 'location_ping_processing_delay_seconds_count')).toBe(1);
+    expect(await metricValue(delay, {}, 'location_ping_processing_delay_seconds_sum')).toBeCloseTo(
+      0.5,
+    );
   });
 
   it('rethrows a transient error without dead-lettering, after the other users finished', async () => {

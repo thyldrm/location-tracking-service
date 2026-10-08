@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Clock } from '../foundation/clock.js';
 import { ThrottledLog } from '../logging/throttled-log.js';
+import { Metrics } from '../metrics/metrics.js';
 import { type RateLimitDecision, RateLimiter, type RateLimitPolicy } from './rate-limiter.js';
 
 /** While Redis keeps failing, report it at most this often instead of on every request. */
@@ -32,6 +33,7 @@ export class RedisRateLimiter extends RateLimiter {
     private readonly redis: Redis,
     clock: Clock,
     @InjectPinoLogger(RedisRateLimiter.name) private readonly logger: PinoLogger,
+    private readonly metrics: Metrics,
   ) {
     super();
     this.failureLog = new ThrottledLog(FAILURE_LOG_INTERVAL_MS, () => clock.now().getTime());
@@ -68,6 +70,8 @@ export class RedisRateLimiter extends RateLimiter {
   }
 
   private reportFailure(error: unknown): void {
+    // Counted every time, logged at most once a minute.
+    this.metrics.rateLimiterFailOpen.inc();
     this.failureLog.record((suppressedSinceLastReport) =>
       this.logger.warn(
         { err: error, suppressedSinceLastReport },

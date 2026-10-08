@@ -11,6 +11,7 @@ import type { Env } from '../../core/config/env.schema.js';
 import { AdvisoryLock, tryAdvisoryXactLock } from '../../core/database/advisory-locks.js';
 import { backoffDelayMs, withJitter } from '../../core/foundation/backoff.js';
 import { MessageProducer, PublishError } from '../../core/messaging/message-producer.js';
+import { Metrics } from '../../core/metrics/metrics.js';
 import { isTopic } from '../../core/messaging/topics.js';
 import { OutboxEventEntity } from './outbox-event.entity.js';
 import { publishInKeyOrder } from './publish-in-key-order.js';
@@ -74,6 +75,7 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly producer: MessageProducer,
     private readonly config: ConfigService<Env, true>,
     @InjectPinoLogger(OutboxRelay.name) private readonly logger: PinoLogger,
+    private readonly metrics: Metrics,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -121,6 +123,12 @@ export class OutboxRelay implements OnApplicationBootstrap, OnApplicationShutdow
         this.logRejection(row, error, maxAttempts);
       }
 
+      this.metrics.outboxPublished.inc(published.length);
+      this.metrics.outboxPublishFailures.inc({ kind: 'rejected' }, rejected.length);
+      this.metrics.outboxPublishFailures.inc(
+        { kind: 'unavailable' },
+        failed.length - rejected.length,
+      );
       return {
         role: 'leader',
         fetched: rows.length,
