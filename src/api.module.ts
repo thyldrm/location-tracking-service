@@ -5,6 +5,7 @@ import { CoreModule } from './core/core.module.js';
 import { SecurityModule } from './core/security/security.module.js';
 import { AreasModule } from './modules/areas/areas.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { LocationsModule } from './modules/locations/locations.module.js';
 
 export type RootModuleOptions = {
   /** Overrides the log destination (stdout); used by tests to capture log lines. */
@@ -25,6 +26,7 @@ export class ApiModule {
         SecurityModule.forRoot(env),
         HealthModule,
         AreasModule,
+        LocationsModule,
       ],
     };
   }

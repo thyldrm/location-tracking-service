@@ -69,6 +69,13 @@ export const envSchema = z.object({
   REDIS_URL: z.url({ protocol: /^rediss?$/ }).default('redis://localhost:6379'),
   // Redis is on the hot path; a slow Redis must not slow the API down (rate limiting fails open).
   REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().int().min(10).max(10_000).default(100),
+
+  // Accepted client timestamps: at most this far in the future (clock skew) ...
+  PING_MAX_FUTURE_SKEW_MS: z.coerce.number().int().min(0).default(60_000),
+  // ... and at most this old.
+  PING_MAX_AGE_MS: z.coerce.number().int().positive().default(86_400_000),
+  RATE_LIMIT_PINGS_PER_WINDOW: z.coerce.number().int().positive().default(10),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(100).default(10_000),
 });
 
 export type Env = z.infer<typeof envSchema>;
