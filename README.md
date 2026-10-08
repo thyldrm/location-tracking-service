@@ -26,6 +26,8 @@ Everything in containers (migrations and topic provisioning run as one-off jobs 
 ```bash
 docker compose --profile app up -d --build
 curl http://localhost:3000/health/live   # Windows PowerShell 5.1: curl.exe
+curl http://localhost:3000/health/ready
+curl http://localhost:3000/metrics
 ```
 
 ## Scripts
@@ -63,6 +65,10 @@ curl http://localhost:3000/health/live   # Windows PowerShell 5.1: curl.exe
 | Log queries         | One index per access path, cursor bound to its filters        | `GET /logs` reads `limit + 1` index entries whatever the table size (0.06–0.24 ms on one million rows), and a cursor replayed with other filters is rejected instead of returning a wrong page. ([ADR 0009](docs/adr/0009-logs-query-design.md)) |
 | Request validation  | Zod schemas in a NestJS pipe                                  | One library for configuration and payloads; handlers only ever receive parsed, typed input, and every failure lists the offending fields.                                                                                                        |
 | Pagination          | Keyset (cursor) on `(created_at, id)`                         | Constant cost per page served straight from an index, and no skipped or repeated rows when data changes between pages, unlike `OFFSET`.                                                                                                          |
+| Metrics             | Prometheus (`prom-client`), one registry per process          | Latency per route, ingestion, freshness (ping accepted → processed), entries, dead letters, outbox backlog and age. Labels never carry ids. ([ADR 0010](docs/adr/0010-operability.md))                                                           |
+| Readiness           | Process state only (starting, draining)                       | A shared dependency outage hits every instance; failing readiness everywhere would also take down the endpoints that do not need it. ([ADR 0010](docs/adr/0010-operability.md))                                                                  |
+| Kafka outage        | Circuit breaker on publishing pings                           | After 5 timeouts, `503` within milliseconds instead of a 3 s wait per request; one trial request every 5 s. ([ADR 0010](docs/adr/0010-operability.md))                                                                                           |
+| Shutdown            | Drain (readiness 503, keep serving 5 s), then close, 25 s cap | Rolling deployments drop no request; consumers commit offsets before the producer and pools close. ([ADR 0010](docs/adr/0010-operability.md))                                                                                                    |
 | Logging             | Structured JSON to stdout (pino)                              | 12-factor: the platform collects and ships logs; the service writes no log files. ([ADR 0004](docs/adr/0004-errors-correlation-and-logging.md))                                                                                                  |
 | Errors              | RFC 9457 Problem Details from one global filter               | Standard, machine-readable error types; internal details are logged, never returned.                                                                                                                                                             |
 | Request correlation | `x-request-id` + AsyncLocalStorage                            | One id follows a request through logs, Kafka headers and outbox events, without request-scoped providers.                                                                                                                                        |

@@ -328,12 +328,31 @@ Response:
 
 ### 5.5 Operational endpoints
 
-| Endpoint            | Purpose                                                                         |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `GET /health/live`  | Process is up (no dependency checks). Liveness probe.                           |
-| `GET /health/ready` | Dependencies required by the role are reachable. Readiness probe.               |
-| `GET /metrics`      | Prometheus metrics.                                                             |
-| `GET /docs`         | OpenAPI UI (disabled when `NODE_ENV=production` unless `OPENAPI_ENABLED=true`). |
+Public (no API key), for the orchestrator and the monitoring system; not routed through the public gateway.
+([ADR 0010](docs/adr/0010-operability.md))
+
+| Endpoint            | Purpose                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| `GET /health/live`  | Liveness: `200` while the event loop responds. Checks no dependency.                                 |
+| `GET /health/ready` | Readiness: `200` when this process should get traffic, `503` while starting or draining (see below). |
+| `GET /metrics`      | Prometheus metrics (§11).                                                                            |
+| `GET /docs`         | OpenAPI UI (disabled when `NODE_ENV=production` unless `OPENAPI_ENABLED=true`). Not implemented yet. |
+
+Readiness response:
+
+```json
+{
+  "status": "not-ready",
+  "reasons": ["draining"],
+  "dependencies": { "database": "up", "kafka": "up", "redis": "down" }
+}
+```
+
+- `reasons` lists what is not met: `draining` (shutting down), `area-index` (worker: index not loaded yet).
+- `dependencies` is information for operators; it does not decide readiness. An outage of a shared dependency
+  affects every instance, and taking all of them out of the load balancer would also fail the endpoints that do not
+  need that dependency. The service answers such outages itself with `503` and `Retry-After`. The database check
+  times out after 500 ms.
 
 ## 6. Messaging contracts
 
@@ -579,24 +598,48 @@ Housekeeping (worker role), at startup and every `HOUSEKEEPING_INTERVAL_MS` (def
 
 ## 10. Failure modes
 
-| Failure                   | Behaviour                                                                                                                                                                                                                                                                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Kafka unavailable         | API: `POST /locations` → `503` with `Retry-After` (after the 3 s delivery timeout, or immediately if never connected); the producer reconnects by itself; readiness fails. Other endpoints keep working and the process starts without Kafka. Worker: consumption pauses; outbox rows accumulate and are published on recovery. |
-| Redis unavailable         | Rate limiting fails **open**; worker reads/writes state from PostgreSQL only. Slower, still correct.                                                                                                                                                                                                                            |
-| PostgreSQL unavailable    | Worker stops committing offsets and retries with backoff (no data loss, lag grows). `/areas` and `/logs` → `503`. `POST /locations` keeps working.                                                                                                                                                                              |
-| Worker crash              | Partitions are rebalanced to other workers; uncommitted messages are redelivered and processed idempotently.                                                                                                                                                                                                                    |
-| Outbox relay leader crash | The relay's advisory lock ends with its transaction: at once when the process crashes, after `idle_in_transaction_session_timeout` (10 s) when the host freezes. Another instance takes over at its next poll; events of the interrupted pass may be published twice.                                                           |
-| Traffic spike             | API scales horizontally; Kafka absorbs bursts; workers scale up to the partition count; lag is the scaling signal.                                                                                                                                                                                                              |
-| Malformed ping in Kafka   | Sent to DLQ, never blocks the partition.                                                                                                                                                                                                                                                                                        |
-| Invalid polygon           | `400` with the PostGIS validity reason.                                                                                                                                                                                                                                                                                         |
+| Failure                   | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Kafka unavailable         | API: `POST /locations` → `503` with `Retry-After`. The first requests wait the 3 s delivery timeout (or fail at once if the producer never connected); after 5 consecutive failures the circuit breaker answers `503` at once and lets one trial request through every 5 s. The producer reconnects by itself. Other endpoints keep working, readiness stays `200` and the process starts without Kafka. Worker: consumption pauses; outbox rows accumulate and are published on recovery. |
+| Redis unavailable         | Rate limiting fails **open**; worker reads/writes state from PostgreSQL only. Slower, still correct.                                                                                                                                                                                                                                                                                                                                                                                       |
+| PostgreSQL unavailable    | Worker stops committing offsets and retries with backoff (no data loss, lag grows). `/areas` and `/logs` → `503`. `POST /locations` keeps working.                                                                                                                                                                                                                                                                                                                                         |
+| Worker crash              | Partitions are rebalanced to other workers; uncommitted messages are redelivered and processed idempotently.                                                                                                                                                                                                                                                                                                                                                                               |
+| Outbox relay leader crash | The relay's advisory lock ends with its transaction: at once when the process crashes, after `idle_in_transaction_session_timeout` (10 s) when the host freezes. Another instance takes over at its next poll; events of the interrupted pass may be published twice.                                                                                                                                                                                                                      |
+| Traffic spike             | API scales horizontally; Kafka absorbs bursts; workers scale up to the partition count; lag is the scaling signal.                                                                                                                                                                                                                                                                                                                                                                         |
+| Malformed ping in Kafka   | Sent to DLQ, never blocks the partition.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Invalid polygon           | `400` with the PostGIS validity reason.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## 11. Non-functional requirements
 
 - **Latency:** `POST /locations` p99 < 50 ms at target load (excluding network).
 - **Freshness:** ping → entry visible p99 < 1 s under normal load.
-- **Graceful shutdown:** on `SIGTERM` stop accepting work, finish in-flight batches, commit offsets, flush the producer, close pools.
-- **Observability:** JSON logs (one object per line on stdout) with `correlationId` on every line; Prometheus metrics for HTTP latency, pings produced/processed,
-  entries/exits detected, processing latency, outbox backlog, DLQ count.
+- **Graceful shutdown:** on `SIGTERM` the API fails readiness and keeps serving for `SHUTDOWN_DRAIN_DELAY_MS`
+  (default 5 s) so the load balancer stops routing to it, then stops accepting connections and finishes requests in
+  progress. Both roles then stop the consumers (offsets committed), the relay and housekeeping, flush the producer and
+  close the pools. The worker does not drain. A shutdown that fails or exceeds `SHUTDOWN_TIMEOUT_MS` (default 25 s)
+  exits with code 1. `SIGINT` closes without draining.
+- **Observability:** JSON logs (one object per line on stdout) with `correlationId` on every line. Prometheus metrics
+  (`GET /metrics`), every series labelled with the process `role`:
+
+  | Metric                                                                                       | Type                                                               | Labels                                            |
+  | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------- |
+  | `http_request_duration_seconds`                                                              | histogram                                                          | `method`, `route` (template), `status_code`       |
+  | `location_pings_accepted_total`                                                              | counter                                                            |                                                   |
+  | `location_pings_rejected_total`                                                              | counter                                                            | `reason`: rate-limited, unavailable, circuit-open |
+  | `rate_limiter_fail_open_total`                                                               | counter                                                            |                                                   |
+  | `circuit_breaker_state` (0 closed, 1 half-open, 2 open)                                      | gauge                                                              | `name`                                            |
+  | `location_pings_processed_total`                                                             | counter                                                            | `outcome`: unchanged, transition, out-of-order    |
+  | `location_ping_processing_delay_seconds` (API acceptance → end of worker processing)         | histogram                                                          |                                                   |
+  | `location_pings_dead_lettered_total`                                                         | counter                                                            | `reason`: invalid-message, processing-failed      |
+  | `area_transitions_total`                                                                     | counter                                                            | `type`: entered, exited                           |
+  | `area_index_areas`, `area_index_last_load_timestamp_seconds`                                 | gauge                                                              |                                                   |
+  | `outbox_events_published_total`                                                              | counter                                                            |                                                   |
+  | `outbox_publish_failures_total`                                                              | counter                                                            | `kind`: unavailable, rejected                     |
+  | `outbox_unpublished_events`, `outbox_oldest_unpublished_age_seconds`, `outbox_parked_events` | gauge (read at scrape time; NaN while the database is unreachable) |                                                   |
+  | Node.js process metrics (`nodejs_eventloop_lag_seconds`, heap, GC, CPU)                      | various                                                            |                                                   |
+
+  Labels never carry ids or user input. Consumer lag is read from the brokers (exporter, KEDA), not by the service.
+
 - **Configuration:** environment variables validated at startup; the process refuses to start on invalid configuration.
 - **Security:** API key comparison in constant time; request body size limit; no stack traces or internal errors in responses.
 
@@ -622,6 +665,6 @@ Housekeeping (worker role), at startup and every `HOUSEKEEPING_INTERVAL_MS` (def
 | 5   | Worker: area index, entry detection, retries, DLQ                 | done    |
 | 6   | Outbox relay + area index refresh                                 | done    |
 | 7   | `GET /logs`                                                       | done    |
-| 8   | Health, metrics, graceful shutdown                                | planned |
+| 8   | Health, metrics, graceful shutdown                                | done    |
 | 9   | Integration / e2e / load tests                                    | planned |
 | 10  | README, ADRs, CI, Kubernetes manifests                            | planned |

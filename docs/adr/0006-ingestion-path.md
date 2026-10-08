@@ -63,7 +63,8 @@ outage is reported by the component that detects it (Kafka client, Redis client)
 
 - While the broker is unreachable but the producer was connected before, each request waits up to the delivery
   timeout (3 s) before its `503`. At full load this holds many requests open. A circuit breaker that fails fast once
-  the broker is known to be down belongs with the readiness work (milestone 8).
+  the broker is known to be down belongs with the readiness work (milestone 8). Resolved by the circuit breaker of
+  [ADR 0010](0010-operability.md).
 - A fixed window can admit a short burst of up to twice the limit at window boundaries.
 - The topic layout is fixed at creation; changing partition counts is an operational procedure, not a deploy step.
 - Windows development machines measure much higher latencies (15.6 ms timer resolution); performance is judged in

@@ -79,6 +79,11 @@ docker compose --profile app up -d --build   # infrastructure + migrations + top
 - **Background loops** (consumers, relay, housekeeping): start in `onApplicationBootstrap` without awaiting, stop through
   an `AbortController` in `onApplicationShutdown`, back off with `backoffDelayMs` + `withJitter` on failure, and never
   let one failure end the loop.
+- **Metrics:** define every metric in `Metrics` (`src/core/metrics/metrics.ts`) and inject it; never use
+  prom-client's global registry. Label values come from small fixed sets (route templates, outcomes), never ids or
+  user input. Count what actually happened (e.g. entries written), not what was attempted.
+- **Readiness:** only process state (startup gates via `ProcessLifecycle.addReadinessGate`, draining) decides
+  `/health/ready`; shared dependencies are reported, not checked for readiness (ADR 0010).
 - **Optional dependencies:** Redis is never required for correctness: code that uses it must degrade (fail open)
   when it is unavailable. Kafka is required for ingestion only; the process must start and serve other endpoints
   without it.
