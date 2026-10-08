@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Clock } from '../foundation/clock.js';
+import { ThrottledLog } from '../logging/throttled-log.js';
 import { type RateLimitDecision, RateLimiter, type RateLimitPolicy } from './rate-limiter.js';
 
 /** While Redis keeps failing, report it at most this often instead of on every request. */
@@ -25,15 +26,15 @@ const KEY_PREFIX = 'rate-limit:';
  */
 @Injectable()
 export class RedisRateLimiter extends RateLimiter {
-  private lastFailureLoggedAt = Number.NEGATIVE_INFINITY;
-  private suppressedFailures = 0;
+  private readonly failureLog: ThrottledLog;
 
   constructor(
     private readonly redis: Redis,
-    private readonly clock: Clock,
+    clock: Clock,
     @InjectPinoLogger(RedisRateLimiter.name) private readonly logger: PinoLogger,
   ) {
     super();
+    this.failureLog = new ThrottledLog(FAILURE_LOG_INTERVAL_MS, () => clock.now().getTime());
   }
 
   async consume(key: string, policy: RateLimitPolicy): Promise<RateLimitDecision> {
@@ -67,16 +68,11 @@ export class RedisRateLimiter extends RateLimiter {
   }
 
   private reportFailure(error: unknown): void {
-    const now = this.clock.now().getTime();
-    if (now - this.lastFailureLoggedAt < FAILURE_LOG_INTERVAL_MS) {
-      this.suppressedFailures++;
-      return;
-    }
-    this.logger.warn(
-      { err: error, suppressedSinceLastReport: this.suppressedFailures },
-      'Rate limiting unavailable; allowing requests (fail open)',
+    this.failureLog.record((suppressedSinceLastReport) =>
+      this.logger.warn(
+        { err: error, suppressedSinceLastReport },
+        'Rate limiting unavailable; allowing requests (fail open)',
+      ),
     );
-    this.lastFailureLoggedAt = now;
-    this.suppressedFailures = 0;
   }
 }
