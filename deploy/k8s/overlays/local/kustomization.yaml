@@ -1,0 +1,64 @@
+# A self-contained deployment for a local cluster (kind): the base plus PostgreSQL, Kafka and Redis in the
+# cluster, development secrets and resource requests that fit a laptop. Not for production.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: location-tracking
+
+resources:
+  - namespace.yaml
+  - ../../base
+  - dependencies.yaml
+
+images:
+  - name: location-tracking-service
+    newName: location-tracking-service
+    newTag: local
+
+configMapGenerator:
+  - name: location-tracking-config
+    behavior: merge
+    literals:
+      - POSTGRES_SSL=false
+      # Fully qualified: KEDA's operator resolves it from its own namespace.
+      - KAFKA_BROKERS=kafka.location-tracking.svc.cluster.local:9092
+      - KAFKA_REPLICATION_FACTOR=1
+      - OPENAPI_ENABLED=true
+
+# Development values only; in production the secret comes from a secret manager.
+secretGenerator:
+  - name: location-tracking-secrets
+    literals:
+      - POSTGRES_USER=location
+      - POSTGRES_PASSWORD=location
+      - API_KEYS=local-development-api-key-change-me-0123456789
+
+patches:
+  # A laptop has a few cores: small requests, and few replicas.
+  - target:
+      kind: Deployment
+      name: location-tracking-(api|worker)
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 250m
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: location-tracking-api
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 4
+  - target:
+      kind: ScaledObject
+      name: location-tracking-worker
+    patch: |-
+      - op: replace
+        path: /spec/minReplicaCount
+        value: 1
+      - op: replace
+        path: /spec/maxReplicaCount
+        value: 3

@@ -1,0 +1,28 @@
+# Production shape of the service: the API and the worker, their autoscaling and disruption budgets, and the
+# one-off jobs that migrate the schema and create the Kafka topics. PostgreSQL, Kafka and Redis are external
+# (managed services); overlays point the configuration at them and provide the secret. See deploy/k8s/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: location-tracking-service
+      app.kubernetes.io/part-of: location-tracking
+    includeSelectors: true
+
+resources:
+  - serviceaccount.yaml
+  - api.yaml
+  - worker.yaml
+  - jobs.yaml
+
+# Non-secret configuration, validated by the service at startup (src/core/config/env.schema.ts). The name gets
+# a hash of the content, so a configuration change rolls the pods.
+configMapGenerator:
+  - name: location-tracking-config
+    envs:
+      - config.env
+
+images:
+  - name: location-tracking-service
+    newName: location-tracking-service

@@ -1,0 +1,175 @@
+# API role: POST /locations, /areas, /logs. Stateless; scaled on CPU (ADR 0011, ADR 0012).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: location-tracking-api
+  labels:
+    app.kubernetes.io/component: api
+spec:
+  # No `replicas`: the HorizontalPodAutoscaler owns the count, and every apply would reset it otherwise.
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api
+  strategy:
+    rollingUpdate:
+      # Capacity never drops during a rollout: new pods start before old ones go.
+      maxUnavailable: 0
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: api
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '3000'
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: location-tracking
+      automountServiceAccountToken: false
+      # Service links would inject variables such as POSTGRES_PORT=tcp://10.0.0.1:5432 into the environment.
+      enableServiceLinks: false
+      # SIGTERM -> 5 s drain -> close; the process exits on its own within SHUTDOWN_TIMEOUT_MS (25 s).
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: api
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: api
+      containers:
+        - name: api
+          image: location-tracking-service
+          command: ['node', 'dist/main.js']
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: location-tracking-config
+            - secretRef:
+                name: location-tracking-secrets
+          env:
+            # Heap below the memory limit, leaving room for the Kafka client's native buffers.
+            - name: NODE_OPTIONS
+              value: --max-old-space-size=384
+          resources:
+            # One core: Node.js runs the requests on one thread, and the HPA's utilisation is relative to
+            # this request. No CPU limit: throttling would add latency while the node has idle CPU.
+            requests:
+              cpu: '1'
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: location-tracking-api
+  labels:
+    app.kubernetes.io/component: api
+spec:
+  selector:
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# One instance sustains ~1,100 pings/s at the latency target; 10,000 pings/s needs ~13 with headroom (ADR 0011).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: location-tracking-api
+  labels:
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: location-tracking-api
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    # Latency rises steeply as the event loop saturates; 65 % keeps instances well below that point.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+    scaleDown:
+      # Traffic dips briefly; removing pods only after 5 calm minutes avoids flapping.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 20
+          periodSeconds: 60
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: location-tracking-api
+  labels:
+    app.kubernetes.io/component: api
+spec:
+  # Voluntary disruptions (node drains, upgrades) take one pod at a time.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api

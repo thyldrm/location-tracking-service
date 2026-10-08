@@ -1,0 +1,146 @@
+# Worker role: entry detection, outbox relay, area index, housekeeping. Scaled on consumer lag by KEDA.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: location-tracking-worker
+  labels:
+    app.kubernetes.io/component: worker
+spec:
+  # No `replicas`: KEDA owns the count (through the HorizontalPodAutoscaler it creates).
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: worker
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '3000'
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: location-tracking
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # Consumers commit their offsets and leave the group, then the producer flushes (ADR 0010).
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: worker
+      containers:
+        - name: worker
+          image: location-tracking-service
+          command: ['node', 'dist/worker.js']
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: location-tracking-config
+            - secretRef:
+                name: location-tracking-secrets
+          env:
+            - name: NODE_OPTIONS
+              value: --max-old-space-size=384
+          resources:
+            requests:
+              cpu: '1'
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Ready once the area index is loaded; the worker gets no routed traffic, but a rollout waits for it.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Lag, not CPU: while the database is slow the worker's CPU drops but its backlog grows (ADR 0012).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: location-tracking-worker
+  labels:
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    name: location-tracking-worker
+  # Three for availability: one worker processes ~10,000 pings/s (ADR 0011), but must not be alone.
+  minReplicaCount: 3
+  # A partition is read by one consumer of the group: more workers than partitions would idle.
+  maxReplicaCount: 24
+  # No pollingInterval / cooldownPeriod: they only matter when scaling to zero. Scaling down is governed
+  # by the HorizontalPodAutoscaler behaviour below.
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          # Every scale-down rebalances the consumer group; one pod at a time, after 5 calm minutes.
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+  triggers:
+    - type: kafka
+      metadata:
+        # Read from the worker container's environment, so the broker list and group live in one place.
+        bootstrapServersFromEnv: KAFKA_BROKERS
+        consumerGroupFromEnv: KAFKA_CONSUMER_GROUP
+        topic: location.pings.v1
+        # Target backlog per worker: about 0.2 s of its throughput.
+        lagThreshold: '2000'
+        offsetResetPolicy: earliest
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: location-tracking-worker
+  labels:
+    app.kubernetes.io/component: worker
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker

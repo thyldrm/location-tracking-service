@@ -1,0 +1,61 @@
+# The ingestion load test (load/ingest.js) run inside the cluster, against the API service. The script is
+# mounted from a ConfigMap created from the file (deploy/k8s/README.md):
+#
+#   kubectl -n location-tracking create configmap k6-ingest --from-file=load/ingest.js
+#   kubectl -n location-tracking apply -f deploy/k8s/kind/k6-job.yaml
+#
+# Pod metrics are not reachable by name here, so the script checks the client side only (APIS=0, WORKERS=0).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-ingest
+  labels:
+    app.kubernetes.io/name: k6
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: k6
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 12345
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: grafana/k6:2.3.0
+          args:
+            - run
+            - -e
+            - BASE_URL=http://location-tracking-api
+            - -e
+            - APIS=0
+            - -e
+            - WORKERS=0
+            - -e
+            - RATE=300
+            - -e
+            - DURATION=4m
+            - /load/ingest.js
+          resources:
+            requests:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            - name: script
+              mountPath: /load
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: k6-ingest

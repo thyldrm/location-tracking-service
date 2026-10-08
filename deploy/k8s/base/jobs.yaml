@@ -1,0 +1,95 @@
+# One-off jobs, run by the deployment pipeline before a rollout (deploy/k8s/README.md). Both are idempotent:
+# applied migrations and existing topics are skipped, and an advisory lock serialises concurrent migrators.
+# Retries back off exponentially (10 s, 20 s, 40 s, ...), so 6 retries cover dependencies that start slowly.
+# Schema changes are backward compatible (expand, then contract), so old pods keep working while new ones start.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: location-tracking-migrate
+  labels:
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: location-tracking
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: location-tracking-service
+          command: ['node', 'dist/migrate.js', 'run']
+          envFrom:
+            - configMapRef:
+                name: location-tracking-config
+            - secretRef:
+                name: location-tracking-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: location-tracking-provision-topics
+  labels:
+    app.kubernetes.io/component: provision-topics
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: provision-topics
+    spec:
+      restartPolicy: Never
+      serviceAccountName: location-tracking
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provision-topics
+          image: location-tracking-service
+          command: ['node', 'dist/provision-topics.js']
+          envFrom:
+            - configMapRef:
+                name: location-tracking-config
+            - secretRef:
+                name: location-tracking-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']

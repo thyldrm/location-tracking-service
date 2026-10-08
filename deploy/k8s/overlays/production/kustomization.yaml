@@ -1,0 +1,23 @@
+# Example of an environment overlay: the base pointed at managed services. The host names are placeholders.
+# The Secret location-tracking-secrets is created by the secret manager, not here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: location-tracking
+
+resources:
+  - ../../base
+
+images:
+  - name: location-tracking-service
+    newName: registry.example.com/location-tracking-service
+    # Set by the deployment pipeline to the image built from the release commit (a digest is safer than a tag).
+    newTag: 1.0.0
+
+configMapGenerator:
+  - name: location-tracking-config
+    behavior: merge
+    literals:
+      - POSTGRES_HOST=location-tracking.postgres.example.internal
+      - KAFKA_BROKERS=kafka-1.example.internal:9092,kafka-2.example.internal:9092,kafka-3.example.internal:9092
+      - REDIS_URL=rediss://location-tracking.redis.example.internal:6379
