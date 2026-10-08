@@ -309,6 +309,19 @@ describe('Areas API (e2e)', () => {
       expect(badLimit.statusCode).toBe(400);
       expect(badLimit.json()).toMatchObject({ errors: [{ path: 'limit' }] });
     });
+
+    it('rejects an unknown query parameter instead of ignoring it', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/areas?limt=10',
+        headers: authorized,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({
+        errors: [{ path: 'limt', message: 'is not a recognised field' }],
+      });
+    });
   });
 
   describe('GET /areas/:id', () => {

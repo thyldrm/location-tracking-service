@@ -45,6 +45,19 @@ describe('ZodValidationPipe', () => {
     expect(() => pipe.transform({}, { type: 'query' })).toThrow('Query parameters are invalid.');
   });
 
+  it('reports every unknown field of a strict schema at its own path', () => {
+    const strict = new ZodValidationPipe(z.strictObject({ limit: z.number().optional() }));
+
+    const error = catchError(() =>
+      strict.transform({ userID: 'u1', sort: 'x' }, { type: 'query' }),
+    );
+
+    expect((error as ValidationError).errors).toEqual([
+      { path: 'userID', message: 'is not a recognised field' },
+      { path: 'sort', message: 'is not a recognised field' },
+    ]);
+  });
+
   it('reports a wrong top-level type at the root path', () => {
     const error = catchError(() => pipe.transform(undefined, { type: 'body' }));
 

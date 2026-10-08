@@ -11,10 +11,17 @@ const DETAIL_BY_SOURCE: Record<ArgumentMetadata['type'], string> = {
 
 /** Converts Zod issues into the `errors` member of a validation problem. */
 export function toFieldErrors(error: z.ZodError): FieldError[] {
-  return error.issues.map((issue) => ({
-    path: issue.path.map(String).join('.') || '(root)',
-    message: issue.message,
-  }));
+  return error.issues.flatMap((issue) => {
+    const path = issue.path.map(String);
+    if (issue.code === 'unrecognized_keys') {
+      // One error per unknown field, at the field's own path, like every other field error.
+      return issue.keys.map((key) => ({
+        path: [...path, key].join('.'),
+        message: 'is not a recognised field',
+      }));
+    }
+    return [{ path: path.join('.') || '(root)', message: issue.message }];
+  });
 }
 
 /**

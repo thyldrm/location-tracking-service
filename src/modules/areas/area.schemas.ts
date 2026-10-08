@@ -53,7 +53,8 @@ export function createAreaSchema(limits: AreaLimits) {
 
 export type CreateAreaInput = z.output<ReturnType<typeof createAreaSchema>>;
 
-export const listAreasQuerySchema = z.object({
+// Strict: a misspelled parameter is an error, not silently ignored.
+export const listAreasQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.string().min(1).max(512).optional(),
 });

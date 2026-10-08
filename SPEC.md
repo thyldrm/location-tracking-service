@@ -118,6 +118,10 @@ Requests to routes that do not exist return `404` before authentication runs.
 - It is propagated to Kafka message headers and outbox events, so one id follows a ping from the HTTP request
   through the worker to the domain events.
 
+**Query parameters.** List endpoints accept only the parameters they document. An unknown parameter (for example the
+misspelled `userID`) is rejected with `400` and one `errors` entry per unknown name, instead of being ignored: a
+misspelled filter would otherwise silently widen the result.
+
 **Errors.** Every error response is an **RFC 9457 Problem Details** document (`application/problem+json`):
 
 ```json
