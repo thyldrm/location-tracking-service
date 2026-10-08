@@ -93,6 +93,16 @@ describe('validateEnv', () => {
     ).toThrow(/PRESENCE_STATE_TTL_MS/);
   });
 
+  it('requires a broker acknowledgement to fit in an open transaction (outbox relay)', () => {
+    expect(() =>
+      validateEnv({
+        ...requiredVariables,
+        KAFKA_DELIVERY_TIMEOUT_MS: '10000',
+        DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: '10000',
+      }),
+    ).toThrow(/KAFKA_DELIVERY_TIMEOUT_MS/);
+  });
+
   it('throws a readable error listing every invalid variable', () => {
     const error = captureError(() =>
       validateEnv({ ...requiredVariables, HTTP_PORT: 'not-a-port', LOG_LEVEL: 'verbose' }),

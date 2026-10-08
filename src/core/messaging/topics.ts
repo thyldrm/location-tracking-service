@@ -14,3 +14,10 @@ export const Topics = {
 } as const;
 
 export type Topic = (typeof Topics)[keyof typeof Topics];
+
+const topicNames: ReadonlySet<string> = new Set(Object.values(Topics));
+
+/** Whether `name` is one of the service's topics, e.g. a topic name read back from the outbox table. */
+export function isTopic(name: string): name is Topic {
+  return topicNames.has(name);
+}

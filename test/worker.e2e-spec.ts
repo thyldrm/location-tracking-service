@@ -71,6 +71,7 @@ describe('Worker: entry detection (e2e)', () => {
   let producer: KafkaJS.Producer;
   let redis: Redis;
   let deadLetters: TopicRecorder;
+  let entryEvents: TopicRecorder;
 
   const send = async (
     userId: string,
@@ -150,10 +151,12 @@ describe('Worker: entry detection (e2e)', () => {
     await producer.connect();
     redis = new Redis(env.REDIS_URL);
     deadLetters = await TopicRecorder.start(Topics.LocationPingsDeadLetter);
+    entryEvents = await TopicRecorder.start(Topics.AreaEntries);
   });
 
   afterAll(async () => {
     await deadLetters.stop();
+    await entryEvents.stop();
     await producer.disconnect();
     await redis.quit();
     await app.close();
@@ -176,6 +179,11 @@ describe('Worker: entry detection (e2e)', () => {
     // The correlation id of the ping follows it into the domain event.
     expect(event.headers['x-request-id']).toBe(`corr-${pingId}`);
     expect(event.payload).toMatchObject({ payload: { entryId: entry?.id, areaId: AREA_A } });
+
+    // The outbox relay of the worker publishes the event to area.entries.v1.
+    const published = await entryEvents.waitFor((message) => message.key === userId);
+    expect(published.value).toEqual(event.payload);
+    expect(published.headers['x-request-id']).toBe(`corr-${pingId}`);
   });
 
   it('records nothing while the user stays inside and closes the entry on the first ping outside', async () => {

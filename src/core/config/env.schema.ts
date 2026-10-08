@@ -93,11 +93,23 @@ export const envSchema = z
     PRESENCE_STATE_TTL_MS: z.coerce.number().int().positive().default(86_400_000),
     // Full reload of the in-memory area index, the safety net behind area.created events.
     AREA_INDEX_REFRESH_MS: z.coerce.number().int().min(1_000).default(60_000),
+
+    // Outbox relay (worker): events published per transaction, and the pause when there is nothing to publish.
+    OUTBOX_BATCH_SIZE: z.coerce.number().int().min(1).max(1_000).default(100),
+    OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(10).max(60_000).default(500),
+    // Broker rejections of one event before the relay stops retrying it (it stays for an operator).
+    OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(100).default(10),
   })
   .refine((env) => env.PRESENCE_STATE_TTL_MS > env.PRESENCE_TTL_MS, {
     // Otherwise the last ping time expires together with the session and stale sessions go unnoticed.
     message: 'must be greater than PRESENCE_TTL_MS',
     path: ['PRESENCE_STATE_TTL_MS'],
+  })
+  .refine((env) => env.KAFKA_DELIVERY_TIMEOUT_MS < env.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS, {
+    // The outbox relay waits for the broker inside its transaction; the server would end the transaction
+    // (and the relay's lock) before a slow acknowledgement arrived.
+    message: 'must be less than DB_IDLE_IN_TRANSACTION_TIMEOUT_MS',
+    path: ['KAFKA_DELIVERY_TIMEOUT_MS'],
   });
 
 export type Env = z.infer<typeof envSchema>;
