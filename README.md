@@ -14,11 +14,12 @@ Prerequisites: Node.js 24, Docker. Shell examples use POSIX syntax (Linux, macOS
 cp .env.example .env
 npm ci
 docker compose up -d          # PostgreSQL/PostGIS, Kafka, Redis
+npm run build && npm run migration:run
 npm run start:dev             # API role on :3000
 HTTP_PORT=3001 npm run start:worker:dev   # worker role on :3001
 ```
 
-Everything in containers:
+Everything in containers (migrations run as a one-off `migrate` job before the api and worker start):
 
 ```bash
 docker compose --profile app up -d --build
@@ -27,12 +28,14 @@ curl http://localhost:3000/health/live
 
 ## Scripts
 
-| Command                              | Purpose                 |
-| ------------------------------------ | ----------------------- |
-| `npm run build`                      | Compile to `dist/`      |
-| `npm run lint` / `npm run typecheck` | Static checks           |
-| `npm test` / `npm run test:e2e`      | Unit / end-to-end tests |
-| `npm run format`                     | Format with Prettier    |
+| Command                                              | Purpose                                                    |
+| ---------------------------------------------------- | ---------------------------------------------------------- |
+| `npm run build`                                      | Compile to `dist/`                                         |
+| `npm run lint` / `npm run typecheck`                 | Static checks                                              |
+| `npm test`                                           | Unit tests (no infrastructure needed)                      |
+| `npm run test:integration`                           | Integration and e2e tests against real containers (Docker) |
+| `npm run migration:run` / `npm run migration:revert` | Apply pending migrations / revert the latest one           |
+| `npm run format`                                     | Format with Prettier                                       |
 
 ## Technical choices
 

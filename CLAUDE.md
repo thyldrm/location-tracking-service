@@ -18,19 +18,23 @@ npm run start:worker:dev # worker role with watch mode
 npm run lint             # oxlint (type-aware)
 npm run format           # prettier --write
 npm run typecheck        # tsc --noEmit
-npm test                 # unit tests (vitest)
-npm run test:e2e         # end-to-end tests
+npm test                 # unit tests (vitest), no infrastructure needed
+npm run test:integration # integration + e2e tests against real containers (Testcontainers; Docker required)
+npm run migration:run    # apply pending migrations (after `npm run build`)
+npm run migration:revert # revert the most recent migration
 docker compose up -d     # PostgreSQL/PostGIS, Kafka, Redis
 docker compose --profile app up -d --build   # infrastructure + api + worker containers
 ```
 
 ## Architecture map
 
-- `src/main.ts` — API role entrypoint. `src/worker.ts` — worker role entrypoint. Same image, different command.
+- `src/main.ts` — API role entrypoint. `src/worker.ts` — worker role entrypoint. `src/migrate.ts` — migration
+  runner. Same image, different command.
 - `src/api.module.ts`, `src/worker.module.ts` — root modules per role; both import `CoreModule`.
 - `src/core/` — cross-cutting infrastructure shared by both roles (config, logging, database, messaging, cache).
 - `src/modules/<feature>/` — feature modules (areas, locations, area-entries, presence, outbox, health).
-- `migrations/` — TypeORM migrations (the only way the schema changes).
+- `src/core/database/migrations/` — hand-written SQL migrations (the only way the schema changes), registered in
+  `migrations/index.ts`. Entities map the schema and are listed in `src/core/database/entities.ts`.
 - `docs/adr/` — Architecture Decision Records. Add one for every significant technical choice.
 
 ## Conventions
@@ -40,13 +44,15 @@ docker compose --profile app up -d --build   # infrastructure + api + worker con
 - **TypeScript:** `strict` mode. No `any` in application code; prefer `unknown` + narrowing.
 - **Dependency injection:** never instantiate services, clients, clocks or id generators with `new` inside
   business code. Inject them so they can be replaced in tests (`Clock`, `IdGenerator` abstractions).
-- **Configuration:** read configuration only through the typed `ConfigService<Env, true>`; never `process.env`
-  outside `src/core/config`. Every new variable goes into the Zod schema and `.env.example`.
+- **Configuration:** the environment is validated once at startup (`loadEnv`). Providers read it through the typed
+  `ConfigService<Env, true>`; infrastructure modules may receive the validated `Env` in `forRoot(env)`. Never read
+  `process.env` outside `src/core/config`. Every new variable goes into the Zod schema and `.env.example`.
 - **Errors:** throw domain or HTTP exceptions; the global exception filter turns them into RFC 9457 problem details.
   Never leak internal error messages or stack traces to clients.
 - **Logging:** use the injected logger; structured fields, not string concatenation. Never log secrets or full payloads
   of personal data at `info` level.
-- **Database:** schema changes only through migrations; `synchronize` stays `false`. Multi-row writes that must be
+- **Database:** schema changes only through migrations; `synchronize` stays `false`. When a migration changes the
+  schema, update the entities too: the schema-drift integration test fails otherwise. Multi-row writes that must be
   consistent go into one explicit transaction. Use keyset pagination, not `OFFSET`.
 - **Messaging:** delivery is at-least-once; every consumer must be idempotent. Never publish to Kafka inside a
   database transaction — write to the outbox instead.
