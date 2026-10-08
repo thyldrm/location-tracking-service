@@ -77,54 +77,20 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
-  kubernetes:
-    name: Docker image and Kubernetes deployment
+  image:
+    name: Docker image
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      KEDA_VERSION: v2.21.0
-      KUBECONFORM: ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate the manifests against the Kubernetes and KEDA schemas
-        env:
-          CRD_SCHEMAS: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
-        run: |
-          for kustomization in base overlays/local overlays/production; do
-            kubectl kustomize "deploy/k8s/${kustomization}" |
-              docker run --rm -i "$KUBECONFORM" -strict -summary -schema-location default \
-                -schema-location "$CRD_SCHEMAS" -
-          done
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           target: runtime
-          load: true
-          tags: location-tracking-service:local
+          push: false
+          tags: location-tracking-service:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # kind (Kubernetes in Docker) is installed on GitHub's Ubuntu runners.
-      - name: Create a kind cluster with KEDA
-        run: |
-          kind create cluster --name ci --wait 120s
-          kubectl apply --server-side -f "https://github.com/kedacore/keda/releases/download/${KEDA_VERSION}/keda-${KEDA_VERSION#v}.yaml"
-          kubectl -n keda wait --for=condition=Available deployment --all --timeout=300s
-      - name: Deploy the local overlay
-        run: |
-          kind load docker-image location-tracking-service:local --name ci
-          kubectl apply -k deploy/k8s/overlays/local
-          kubectl -n location-tracking wait --for=condition=complete job --all --timeout=600s
-          kubectl -n location-tracking rollout status deployment/location-tracking-api --timeout=300s
-          kubectl -n location-tracking rollout status deployment/location-tracking-worker --timeout=300s
-      - name: Smoke test (area, pings, entry in GET /logs)
-        run: deploy/k8s/smoke-test.sh
-      - name: Diagnostics
-        if: failure()
-        run: |
-          kubectl -n location-tracking get pods,jobs,hpa,scaledobject -o wide || true
-          kubectl -n location-tracking get events --sort-by=.lastTimestamp | tail -50 || true
-          kubectl -n location-tracking logs deployment/location-tracking-api --tail=100 || true
-          kubectl -n location-tracking logs deployment/location-tracking-worker --tail=100 || true

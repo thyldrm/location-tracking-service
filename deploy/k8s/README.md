@@ -9,7 +9,7 @@ Kustomize manifests for the service. Decisions are recorded in
 | `overlays/local/`      | A self-contained deployment for a local cluster: the base plus PostgreSQL/PostGIS, Kafka and Redis in the cluster, development secrets and small resource requests                       |
 | `overlays/production/` | An example environment overlay: the base pointed at managed services (placeholder host names), the image from a registry                                                                 |
 | `kind/`                | Helpers for a local kind cluster: the metrics-server patch and the load test as a Job                                                                                                    |
-| `smoke-test.sh`        | End-to-end check of a deployment (bash; used by CI): creates an area, sends pings, waits for the entry in `GET /logs`                                                                    |
+| `smoke-test.sh`        | End-to-end check of a deployment (bash): creates an area, sends pings, waits for the entry in `GET /logs`                                                                                |
 
 ## Deploying to a production cluster
 

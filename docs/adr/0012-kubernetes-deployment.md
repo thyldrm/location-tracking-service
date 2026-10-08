@@ -65,17 +65,20 @@ into the environment.
 
 GitHub Actions runs on every pull request and every push to `main`:
 
-| Job                             | Checks                                                                                                                                                                 |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Format, lint, types, unit tests | `npm ci`, Prettier, oxlint, `tsc`, Vitest, build                                                                                                                       |
-| Integration and e2e tests       | The Testcontainers suite (PostgreSQL/PostGIS, Kafka, Redis)                                                                                                            |
-| Commit messages                 | commitlint over the commits of the pull request                                                                                                                        |
-| Docker image and Kubernetes     | Manifests validated against the Kubernetes and KEDA schemas; the image built and deployed to a kind cluster with KEDA; a smoke test: area, pings, entry in `GET /logs` |
+| Job                             | Checks                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| Format, lint, types, unit tests | `npm ci`, Prettier, oxlint, `tsc`, Vitest, build                               |
+| Integration and e2e tests       | The Testcontainers suite (PostgreSQL/PostGIS, Kafka, Redis)                    |
+| Commit messages                 | commitlint over the commits of the pull request                                |
+| Docker image                    | The image is built (not pushed), so a broken Dockerfile fails the pull request |
 
 The token is read-only, checkouts keep no credentials, pull request data reaches scripts through the environment, and
-third-party actions are pinned to commits; Dependabot proposes updates. The repository has no remote yet: the
-workflow was checked with actionlint (including shellcheck), and each job's steps were run locally (the checks job in a
-clean Linux container, the Kubernetes steps on kind).
+third-party actions are pinned to commits; Dependabot proposes updates.
+
+The pipeline does not deploy to Kubernetes. A first version created a kind cluster in every run, deployed the local
+overlay and ran `deploy/k8s/smoke-test.sh`; it was removed because it added 10-15 minutes and external downloads (KEDA,
+the dependency images) to every pull request for manifests that rarely change. The manifests are checked by hand on
+kind instead (deploy/k8s/README.md), as recorded below.
 
 ## Verified on a local kind cluster
 
@@ -106,6 +109,5 @@ Kubernetes 1.37, metrics-server 0.9.0, KEDA 2.21.0, the local overlay:
 ## Consequences
 
 - One `kubectl apply -k` deploys the service; the autoscalers keep the replica counts, so manifests never set them.
-- Every pull request deploys the service to a real Kubernetes API, so a broken manifest fails CI rather than a
-  release.
+- A change to the manifests must be tried on kind by hand (deploy/k8s/README.md); CI does not check them.
 - Rolling updates require backward-compatible migrations.

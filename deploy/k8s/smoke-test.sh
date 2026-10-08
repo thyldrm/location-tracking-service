@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end smoke test of a deployment (used by CI on a kind cluster): creates an area through the API, sends
+# End-to-end smoke test of a deployment (e.g. on a local kind cluster): creates an area through the API, sends
 # pings from inside it and waits until the entry shows up in GET /logs. Every hop is exercised: the API, Kafka,
 # the outbox relay, the worker's area index and entry detection, PostgreSQL.
 #
