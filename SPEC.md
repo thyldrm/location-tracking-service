@@ -197,18 +197,41 @@ Creates an area.
 Validation:
 
 - `name`: required, 1–120 chars, trimmed. Unique among areas (case-insensitive) → `409` on conflict.
-- `description`: optional, ≤ 1000 chars.
+  Uniqueness is enforced by the unique index `uq_areas_name_lower`, not by a prior lookup.
+- `description`: optional, ≤ 1000 chars; omitted or `null` is stored as `null`.
 - `geometry`: GeoJSON `Polygon` only (holes allowed). Every ring closed (first = last position) with ≥ 4 positions.
-  Positions are `[lon, lat]` within valid ranges. Total positions ≤ `AREA_MAX_VERTICES` (default 5,000).
-  Must be valid according to PostGIS `ST_IsValid`; the reason from `ST_IsValidReason` is returned in the error.
-  Ring orientation is normalised on write.
+  Positions are `[lon, lat]` within valid ranges; positions with altitude are rejected.
+  Total positions of all rings ≤ `AREA_MAX_VERTICES` (default 5,000).
+  Must be valid according to PostGIS `ST_IsValid`; otherwise `400` with the `ST_IsValidReason` text
+  (e.g. `Self-intersection[29.03 40.995]`) as the message of the `geometry` field error.
+  Ring orientation is normalised on write to RFC 7946 §3.1.6 (exterior counterclockwise, holes clockwise).
 
-Optional header `Idempotency-Key` (≤ 128 chars): a retried request with the same key returns the originally created area
-instead of failing with `409`.
+Optional header `Idempotency-Key` (1–128 visible ASCII characters):
 
-Responses: `201 Created` with the area resource and a `Location` header; `400`, `401`, `409`.
+- The first request with a key creates the area. The key, the area and its event commit in one transaction, so a key
+  is only remembered when the request succeeded.
+- A retry with the same key and the same (validated) body returns `201` with the original area and `Location`
+  header plus `Idempotent-Replayed: true`, and creates nothing.
+- Concurrent requests with the same key create exactly one area; the others wait for it and are replayed.
+- The same key with a different body → `422 unprocessable`.
+- Keys are scoped per operation (`areas.create`) and are retained for 24 h (deleted by the worker's housekeeping,
+  milestone 6). Keys are not scoped per API client: callers are trusted internal services.
 
-Side effect: an `area.created` event is written to the outbox in the same transaction.
+Responses: `201 Created` with the area resource and a `Location: /areas/{id}` header; `400`, `401`, `409`, `422`.
+
+Side effect: an `area.created` event (topic `area.lifecycle.v1`, key `areaId`) is written to the outbox in the same
+transaction. Its payload carries the whole area, geometry included, so workers can update their area index from the
+event alone:
+
+```json
+{
+  "areaId": "…",
+  "name": "…",
+  "description": null,
+  "geometry": { "type": "Polygon", "coordinates": [] },
+  "createdAt": "…"
+}
+```
 
 ### 5.3 `GET /areas`
 
@@ -233,7 +256,11 @@ Response:
 }
 ```
 
-`GET /areas/:id` returns a single area or `404`.
+`nextCursor` is `null` on the last page. A cursor that was not produced by the service, or a `limit` out of range,
+→ `400` with the field error on `cursor` / `limit`. Area timestamps have millisecond precision, the precision of the
+cursor.
+
+`GET /areas/:id` returns a single area, `404` if it does not exist, `400` if `id` is not a UUID.
 
 ### 5.4 `GET /logs`
 
@@ -441,6 +468,7 @@ Area index:
 - Publishing failures increment `attempts` and store `last_error`; the row is retried on the next loop.
 - A crash after publish but before marking causes a re-publish → consumers deduplicate by `eventId`.
 - Published rows older than `OUTBOX_RETENTION_MS` (default 7 d) are deleted by the relay.
+- The same housekeeping deletes `idempotency_keys` rows older than 24 h.
 
 ## 10. Failure modes
 
@@ -482,7 +510,7 @@ Area index:
 | 0   | Repository skeleton, tooling, config validation, Docker Compose   | done    |
 | 1   | Database schema and migrations                                    | done    |
 | 2   | Error handling, correlation id, structured logging, API key guard | done    |
-| 3   | Areas API + outbox writer + idempotency keys                      | planned |
+| 3   | Areas API + outbox writer + idempotency keys                      | done    |
 | 4   | Kafka module + `POST /locations` + rate limiting                  | planned |
 | 5   | Worker: area index, entry detection, retries, DLQ                 | planned |
 | 6   | Outbox relay + area index refresh                                 | planned |

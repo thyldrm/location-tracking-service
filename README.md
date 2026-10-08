@@ -52,6 +52,9 @@ curl http://localhost:3000/health/live   # Windows PowerShell 5.1: curl.exe
 | Hot-path geometry     | In-memory R-tree (`flatbush`) + exact point-in-polygon       | Areas are few and change rarely, pings are many: point-in-polygon runs without a database round trip. PostgreSQL remains the source of truth.                                                                        |
 | Reliable events       | Transactional outbox                                         | Entries and their `area.entered` events are committed atomically, avoiding the database-plus-broker dual-write problem.                                                                                              |
 | Idempotency           | Natural keys (`user_area_presence` primary key)              | Kafka delivers at least once; duplicates are absorbed without a per-message inbox write.                                                                                                                             |
+| Safe client retries   | `Idempotency-Key` on `POST /areas`                           | A client that lost the response can retry and gets the original area back instead of a `409` or a duplicate. The key is claimed in the same transaction as the area. ([ADR 0005](docs/adr/0005-areas-api.md))        |
+| Request validation    | Zod schemas in a NestJS pipe                                 | One library for configuration and payloads; handlers only ever receive parsed, typed input, and every failure lists the offending fields.                                                                            |
+| Pagination            | Keyset (cursor) on `(created_at, id)`                        | Constant cost per page served straight from an index, and no skipped or repeated rows when data changes between pages, unlike `OFFSET`.                                                                              |
 | Logging               | Structured JSON to stdout (pino)                             | 12-factor: the platform collects and ships logs; the service writes no log files. ([ADR 0004](docs/adr/0004-errors-correlation-and-logging.md))                                                                      |
 | Errors                | RFC 9457 Problem Details from one global filter              | Standard, machine-readable error types; internal details are logged, never returned.                                                                                                                                 |
 | Request correlation   | `x-request-id` + AsyncLocalStorage                           | One id follows a request through logs, Kafka headers and outbox events, without request-scoped providers.                                                                                                            |
@@ -74,6 +77,8 @@ curl http://localhost:3000/health/live   # Windows PowerShell 5.1: curl.exe
 - **Eventual consistency:** `POST /locations` returns `202 Accepted` once the ping is durably in Kafka. The entry
   appears in `GET /logs` shortly after (target < 1 s).
 - **Coordinates** are WGS84; GeoJSON positions are `[longitude, latitude]`.
+- **Areas** have unique names (case-insensitive) and must be valid polygons according to PostGIS. They are never
+  updated or deleted in v1, and none crosses the antimeridian (the service operates in Turkey).
 
 ## Out of scope
 

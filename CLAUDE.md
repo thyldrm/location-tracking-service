@@ -50,6 +50,9 @@ docker compose --profile app up -d --build   # infrastructure + api + worker con
 - **Errors:** throw `AppError` subclasses from `src/core/errors/app-errors.ts` (`NotFoundError`, `ConflictError`, ...).
   `ProblemDetailsFilter` renders every error as RFC 9457 problem details; never build error responses by hand and
   never leak internal error messages or stack traces to clients. New mappings go into `resolveProblem` with a test.
+- **Validation:** validate every request input with a Zod schema through `ZodValidationPipe`
+  (`@Body(new ZodValidationPipe(schema))`); handlers receive the parsed output only. A pipe that needs configuration is
+  an `@Injectable()` subclass passed by class (`@Body(CreateAreaValidationPipe)`).
 - **Request context:** read the correlation id through `RequestContext`; wrap non-HTTP units of work (e.g. a consumed
   message) in `RequestContext.run(correlationId, ...)`. Do not use request-scoped providers.
 - **Authentication:** every API route requires `x-api-key` by default; mark intentionally open routes with `@Public()`.
@@ -65,7 +68,10 @@ docker compose --profile app up -d --build   # infrastructure + api + worker con
   verify database rules independently of the ORM. Raw SQL is always parameterized and lives in the infrastructure /
   repository layer, never in controllers or services.
 - **Messaging:** delivery is at-least-once; every consumer must be idempotent. Never publish to Kafka inside a
-  database transaction — write to the outbox instead.
+  database transaction — write to the outbox instead (`OutboxWriter.append(manager, event)` with the transaction's
+  `EntityManager`). Topic names live in `src/core/messaging/topics.ts`.
+- **Uniqueness:** enforce it with a named unique constraint and translate the violation (`isUniqueViolation`) into a
+  `ConflictError`; never "check, then insert".
 - **Tests:** unit tests live next to the code as `*.spec.ts`; e2e/integration tests live in `test/`.
   Behaviour described in `SPEC.md` should have a test.
 
