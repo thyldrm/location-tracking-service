@@ -47,6 +47,9 @@ export const envSchema = z.object({
   DB_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+
+  // Upper bound on the positions of one area polygon (all rings together).
+  AREA_MAX_VERTICES: z.coerce.number().int().min(4).max(100_000).default(5_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

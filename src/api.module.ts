@@ -3,6 +3,7 @@ import type { DestinationStream } from 'pino';
 import type { Env } from './core/config/env.schema.js';
 import { CoreModule } from './core/core.module.js';
 import { SecurityModule } from './core/security/security.module.js';
+import { AreasModule } from './modules/areas/areas.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 
 export type RootModuleOptions = {
@@ -23,6 +24,7 @@ export class ApiModule {
         CoreModule.forRoot(env, { role: 'api', destination: options.logDestination }),
         SecurityModule.forRoot(env),
         HealthModule,
+        AreasModule,
       ],
     };
   }
