@@ -34,7 +34,12 @@ export class UserAreaPresenceEntity {
   @Column({ name: 'entry_id', type: 'uuid' })
   entryId: string;
 
-  @ManyToOne(() => AreaEntryEntity, { nullable: false, onDelete: 'RESTRICT' })
+  // Checked at commit: the presence row (the idempotency guard) is inserted before its entry.
+  @ManyToOne(() => AreaEntryEntity, {
+    nullable: false,
+    onDelete: 'RESTRICT',
+    deferrable: 'INITIALLY DEFERRED',
+  })
   @JoinColumn({ name: 'entry_id', foreignKeyConstraintName: 'fk_user_area_presence_entry' })
   entry?: AreaEntryEntity;
 
