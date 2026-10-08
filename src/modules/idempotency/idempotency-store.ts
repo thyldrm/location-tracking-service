@@ -73,4 +73,30 @@ export class IdempotencyStore {
     }
     return { status: 'replay', resourceId: existing.resourceId };
   }
+
+  /**
+   * Deletes up to `limit` keys created before `createdBefore`, oldest first, and returns how many were
+   * deleted. A key is honoured until it is deleted, i.e. for at least its time to live.
+   */
+  async deleteCreatedBefore(
+    manager: EntityManager,
+    createdBefore: Date,
+    limit: number,
+  ): Promise<number> {
+    // Served by idx_idempotency_keys_created_at; the limit keeps each delete (and its locks) short.
+    const oldest = manager
+      .createQueryBuilder(IdempotencyKeyEntity, 'idempotency')
+      .select(['idempotency.scope', 'idempotency.key'])
+      .where('idempotency.createdAt < :createdBefore', { createdBefore })
+      .orderBy('idempotency.createdAt', 'ASC')
+      .limit(limit);
+    const result = await manager
+      .createQueryBuilder()
+      .delete()
+      .from(IdempotencyKeyEntity)
+      .where(`("scope", "key") IN (${oldest.getQuery()})`)
+      .setParameters(oldest.getParameters())
+      .execute();
+    return result.affected ?? 0;
+  }
 }

@@ -99,6 +99,11 @@ export const envSchema = z
     OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(10).max(60_000).default(500),
     // Broker rejections of one event before the relay stops retrying it (it stays for an operator).
     OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(100).default(10),
+
+    // Housekeeping (worker): how often it runs, how long published outbox events and idempotency keys are kept.
+    HOUSEKEEPING_INTERVAL_MS: z.coerce.number().int().min(1_000).default(600_000),
+    OUTBOX_RETENTION_MS: z.coerce.number().int().min(60_000).default(604_800_000),
+    IDEMPOTENCY_KEY_TTL_MS: z.coerce.number().int().min(60_000).default(86_400_000),
   })
   .refine((env) => env.PRESENCE_STATE_TTL_MS > env.PRESENCE_TTL_MS, {
     // Otherwise the last ping time expires together with the session and stale sessions go unnoticed.
