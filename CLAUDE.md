@@ -22,8 +22,9 @@ npm test                 # unit tests (vitest), no infrastructure needed
 npm run test:integration # integration + e2e tests against real containers (Testcontainers; Docker required)
 npm run migration:run    # build, then apply pending migrations
 npm run migration:revert # build, then revert the most recent migration
+npm run topics:provision # build, then create missing Kafka topics
 docker compose up -d     # PostgreSQL/PostGIS, Kafka, Redis
-docker compose --profile app up -d --build   # infrastructure + api + worker containers
+docker compose --profile app up -d --build   # infrastructure + migrations + topics + api + worker containers
 ```
 
 ## Architecture map
@@ -69,7 +70,13 @@ docker compose --profile app up -d --build   # infrastructure + api + worker con
   repository layer, never in controllers or services.
 - **Messaging:** delivery is at-least-once; every consumer must be idempotent. Never publish to Kafka inside a
   database transaction — write to the outbox instead (`OutboxWriter.append(manager, event)` with the transaction's
-  `EntityManager`). Topic names live in `src/core/messaging/topics.ts`.
+  `EntityManager`). Topic names live in `src/core/messaging/topics.ts`, their settings in `topic-definitions.ts`
+  (topics are never auto-created). Publish through the `MessageProducer` abstraction, never the Kafka client directly.
+- **Optional dependencies:** Redis is never required for correctness: code that uses it must degrade (fail open)
+  when it is unavailable. Kafka is required for ingestion only; the process must start and serve other endpoints
+  without it.
+- **Logging volume:** high-volume endpoints log access at `debug`. Errors raised on purpose for an outage (`429`,
+  `503`) are `expected`; report the outage once where it is detected, not per request.
 - **Uniqueness:** enforce it with a named unique constraint and translate the violation (`isUniqueViolation`) into a
   `ConflictError`; never "check, then insert".
 - **Tests:** unit tests live next to the code as `*.spec.ts`; e2e/integration tests live in `test/`.

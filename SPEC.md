@@ -161,6 +161,9 @@ Request body:
 | `timestamp` | string | required, ISO 8601 with offset; within skew / age limits (§3.4)           |
 | `accuracy`  | number | optional, meters, ≥ 0 (stored on the event, not used for decisions in v1) |
 
+Processing order: body validation → timestamp limits (`PING_MAX_FUTURE_SKEW_MS`, `PING_MAX_AGE_MS`) → rate limit →
+publish. Invalid pings do not count against the rate limit. The timestamp is normalised to UTC in the message.
+
 Responses:
 
 | Status         | When                                                                                                                             |
@@ -170,6 +173,19 @@ Responses:
 | `401`          | Missing / invalid API key                                                                                                        |
 | `429`          | Per-user rate limit exceeded (`RATE_LIMIT_PINGS_PER_WINDOW` per `RATE_LIMIT_WINDOW_MS`, default 10 per 10 s). `Retry-After` set. |
 | `503`          | Kafka unavailable or producer queue full. `Retry-After` set. The client should retry or drop the ping.                           |
+
+Kafka acknowledgement: `202` means every in-sync replica has the message (idempotent producer, `acks=all`).
+Kafka failures:
+
+- Producer not connected yet (e.g. the cluster was down when the process started): `503` immediately, `Retry-After: 5`.
+- Broker does not acknowledge within `KAFKA_DELIVERY_TIMEOUT_MS` (default 3 s): `503`, `Retry-After: 5`.
+- Local producer queue full (`KAFKA_PRODUCER_QUEUE_MAX_MESSAGES`, backpressure): `503` immediately, `Retry-After: 1`.
+
+Rate limiting: fixed window per user in Redis, shared by all API instances; the window starts with the user's first
+ping. If Redis is unavailable or slower than `REDIS_COMMAND_TIMEOUT_MS`, the ping is accepted (fails open).
+
+Logging: access log lines of this endpoint are written at `debug` level (only unexpected `500`s at `error`); its
+traffic is observed through metrics (§11).
 
 ### 5.2 `POST /areas`
 
@@ -289,12 +305,16 @@ Item:
 All messages are JSON, UTF-8. Headers: `x-request-id` (correlation id), `content-type: application/json`,
 `schema-version`.
 
-| Topic                   | Key      | Producer     | Consumers                                                     | Notes                                                     |
-| ----------------------- | -------- | ------------ | ------------------------------------------------------------- | --------------------------------------------------------- |
-| `location.pings.v1`     | `userId` | API          | Worker group `entry-detector` (work queue semantics)          | Retention 7 d. Partition count bounds worker parallelism. |
-| `location.pings.v1.dlq` | `userId` | Worker       | Operators                                                     | Poison pings after retries are exhausted.                 |
-| `area.lifecycle.v1`     | `areaId` | Outbox relay | Every worker instance (unique group per instance → broadcast) | `area.created`                                            |
-| `area.entries.v1`       | `userId` | Outbox relay | Downstream services                                           | `area.entered`, `area.exited`                             |
+| Topic                   | Key      | Producer     | Consumers                                                     | Notes                                                                    |
+| ----------------------- | -------- | ------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `location.pings.v1`     | `userId` | API          | Worker group `entry-detector` (work queue semantics)          | 24 partitions, retention 7 d. Partition count bounds worker parallelism. |
+| `location.pings.v1.dlq` | `userId` | Worker       | Operators                                                     | 3 partitions, retention 14 d. Poison pings after retries are exhausted.  |
+| `area.lifecycle.v1`     | `areaId` | Outbox relay | Every worker instance (unique group per instance → broadcast) | 3 partitions, retention 7 d. `area.created`                              |
+| `area.entries.v1`       | `userId` | Outbox relay | Downstream services                                           | 12 partitions, retention 7 d. `area.entered`, `area.exited`              |
+
+Topics are defined in `src/core/messaging/topic-definitions.ts` and created by a one-off provisioning step
+(`node dist/provision-topics.js`) that only creates missing topics; brokers do not create topics automatically.
+Replication factor `KAFKA_REPLICATION_FACTOR` (3 in production) with `min.insync.replicas = min(2, RF)`.
 
 Ping message value:
 
@@ -472,16 +492,16 @@ Area index:
 
 ## 10. Failure modes
 
-| Failure                   | Behaviour                                                                                                                                             |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Kafka unavailable         | API: `POST /locations` → `503` with `Retry-After`; readiness fails. Worker: consumption pauses; outbox rows accumulate and are published on recovery. |
-| Redis unavailable         | Rate limiting fails **open**; worker reads/writes state from PostgreSQL only. Slower, still correct.                                                  |
-| PostgreSQL unavailable    | Worker stops committing offsets and retries with backoff (no data loss, lag grows). `/areas` and `/logs` → `503`. `POST /locations` keeps working.    |
-| Worker crash              | Partitions are rebalanced to other workers; uncommitted messages are redelivered and processed idempotently.                                          |
-| Outbox relay leader crash | Advisory lock is released with its session; a standby instance takes over.                                                                            |
-| Traffic spike             | API scales horizontally; Kafka absorbs bursts; workers scale up to the partition count; lag is the scaling signal.                                    |
-| Malformed ping in Kafka   | Sent to DLQ, never blocks the partition.                                                                                                              |
-| Invalid polygon           | `400` with the PostGIS validity reason.                                                                                                               |
+| Failure                   | Behaviour                                                                                                                                                                                                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kafka unavailable         | API: `POST /locations` → `503` with `Retry-After` (after the 3 s delivery timeout, or immediately if never connected); the producer reconnects by itself; readiness fails. Other endpoints keep working and the process starts without Kafka. Worker: consumption pauses; outbox rows accumulate and are published on recovery. |
+| Redis unavailable         | Rate limiting fails **open**; worker reads/writes state from PostgreSQL only. Slower, still correct.                                                                                                                                                                                                                            |
+| PostgreSQL unavailable    | Worker stops committing offsets and retries with backoff (no data loss, lag grows). `/areas` and `/logs` → `503`. `POST /locations` keeps working.                                                                                                                                                                              |
+| Worker crash              | Partitions are rebalanced to other workers; uncommitted messages are redelivered and processed idempotently.                                                                                                                                                                                                                    |
+| Outbox relay leader crash | Advisory lock is released with its session; a standby instance takes over.                                                                                                                                                                                                                                                      |
+| Traffic spike             | API scales horizontally; Kafka absorbs bursts; workers scale up to the partition count; lag is the scaling signal.                                                                                                                                                                                                              |
+| Malformed ping in Kafka   | Sent to DLQ, never blocks the partition.                                                                                                                                                                                                                                                                                        |
+| Invalid polygon           | `400` with the PostGIS validity reason.                                                                                                                                                                                                                                                                                         |
 
 ## 11. Non-functional requirements
 
@@ -511,7 +531,7 @@ Area index:
 | 1   | Database schema and migrations                                    | done    |
 | 2   | Error handling, correlation id, structured logging, API key guard | done    |
 | 3   | Areas API + outbox writer + idempotency keys                      | done    |
-| 4   | Kafka module + `POST /locations` + rate limiting                  | planned |
+| 4   | Kafka module + `POST /locations` + rate limiting                  | done    |
 | 5   | Worker: area index, entry detection, retries, DLQ                 | planned |
 | 6   | Outbox relay + area index refresh                                 | planned |
 | 7   | `GET /logs`                                                       | planned |
