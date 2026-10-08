@@ -1,7 +1,7 @@
 # Local development and demo stack.
 #
 #   docker compose up -d                          # infrastructure only (run the app with npm)
-#   docker compose --profile app up -d --build    # infrastructure + api + worker containers
+#   docker compose --profile app up -d --build    # infrastructure + migrations + api + worker containers
 
 name: location-tracking
 
@@ -18,9 +18,16 @@ x-app: &app
     LOG_LEVEL: info
     HTTP_HOST: 0.0.0.0
     HTTP_PORT: '3000'
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: '5432'
+    POSTGRES_USER: location
+    POSTGRES_PASSWORD: location
+    POSTGRES_DB: location_tracking
   depends_on:
     postgres:
       condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
     kafka:
       condition: service_healthy
     redis:
@@ -111,6 +118,17 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # One-off job: applies pending migrations, then exits. api and worker start only if it succeeds.
+  migrate:
+    <<: *app
+    command: ['node', 'dist/migrate.js', 'run']
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
 
   api:
     <<: *app
