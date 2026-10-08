@@ -30,6 +30,14 @@ export abstract class AppError extends Error {
   get headers(): Record<string, string> {
     return {};
   }
+
+  /**
+   * Whether this is an anticipated outcome rather than a bug. Expected errors are logged at debug level;
+   * unexpected ones at error level with their stack trace.
+   */
+  get expected(): boolean {
+    return this.status < 500;
+  }
 }
 
 export class ValidationError extends AppError {
@@ -88,6 +96,14 @@ abstract class RetryableError extends AppError {
 
   override get headers(): Record<string, string> {
     return { 'retry-after': String(this.retryAfterSeconds) };
+  }
+
+  /**
+   * Raised on purpose when a dependency is down or a limit is reached: the cause is reported once by the
+   * component that detected it, not once per rejected request (which would flood the logs in an outage).
+   */
+  override get expected(): boolean {
+    return true;
   }
 }
 

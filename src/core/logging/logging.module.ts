@@ -11,6 +11,14 @@ import { createLoggerOptions, type LoggingEnv } from './logger-options.js';
 const OPERATIONAL_PATHS = new Set(['/health/live', '/health/ready', '/metrics']);
 
 /**
+ * Ingestion endpoints receive thousands of requests per second: one access log line each would cost
+ * hundreds of gigabytes a day, and an outage answered with 503 would flood the logs. Their access log is
+ * written at debug level; only unexpected failures (500) are logged as errors. Their traffic is observed
+ * through metrics instead.
+ */
+const HIGH_VOLUME_PATHS = new Set(['/locations']);
+
+/**
  * Path of the request without the query string. Inside NestJS middleware on Fastify, `req.url` is
  * temporarily rewritten relative to the middleware mount point; the full URL is kept in `originalUrl`.
  */
@@ -51,7 +59,10 @@ export class LoggingModule {
               // Request-scoped child loggers carry only the correlation id, not the whole request.
               quietReqLogger: true,
               autoLogging: { ignore: (request) => OPERATIONAL_PATHS.has(requestPath(request)) },
-              customLogLevel: (_request, response, error) => {
+              customLogLevel: (request, response, error) => {
+                if (HIGH_VOLUME_PATHS.has(requestPath(request))) {
+                  return response.statusCode === 500 ? 'error' : 'debug';
+                }
                 if (error || response.statusCode >= 500) return 'error';
                 if (response.statusCode >= 400) return 'warn';
                 return 'info';

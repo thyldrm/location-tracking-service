@@ -54,7 +54,8 @@ describe('resolveProblem', () => {
       expect(resolveProblem(new ServiceUnavailableError('Kafka is down.', 2))).toMatchObject({
         problem: { status: 503 },
         headers: { 'retry-after': '2' },
-        expected: false,
+        // Raised on purpose: the outage is reported by the component that detected it.
+        expected: true,
       });
     });
 

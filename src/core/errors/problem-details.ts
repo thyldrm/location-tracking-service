@@ -177,7 +177,7 @@ export function resolveProblem(exception: unknown): ResolvedProblem {
         ...exception.extensions,
       },
       headers: exception.headers,
-      expected: exception.status < 500,
+      expected: exception.expected,
     };
   }
   if (exception instanceof HttpException) {
