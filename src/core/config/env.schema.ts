@@ -41,6 +41,11 @@ export const envSchema = z
     HTTP_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
     HTTP_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
     HTTP_TRUST_PROXY: booleanString.default(false),
+    // On SIGTERM: keep serving this long with readiness failing, so the load balancer stops routing here ...
+    SHUTDOWN_DRAIN_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(5_000),
+    // ... and give up (exit 1) if the whole shutdown takes longer than this. Keep it below the
+    // orchestrator's grace period (Kubernetes: terminationGracePeriodSeconds, 30 s by default).
+    SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(25_000),
 
     // Credentials have no defaults on purpose: a deployment that forgets them must not start.
     POSTGRES_HOST: z.string().min(1).default('localhost'),
@@ -113,6 +118,10 @@ export const envSchema = z
     // Otherwise the last ping time expires together with the session and stale sessions go unnoticed.
     message: 'must be greater than PRESENCE_TTL_MS',
     path: ['PRESENCE_STATE_TTL_MS'],
+  })
+  .refine((env) => env.SHUTDOWN_DRAIN_DELAY_MS < env.SHUTDOWN_TIMEOUT_MS, {
+    message: 'must be less than SHUTDOWN_TIMEOUT_MS',
+    path: ['SHUTDOWN_DRAIN_DELAY_MS'],
   })
   .refine((env) => env.KAFKA_DELIVERY_TIMEOUT_MS < env.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS, {
     // The outbox relay waits for the broker inside its transaction; the server would end the transaction

@@ -103,6 +103,16 @@ describe('validateEnv', () => {
     ).toThrow(/KAFKA_DELIVERY_TIMEOUT_MS/);
   });
 
+  it('requires the drain delay to fit in the shutdown timeout', () => {
+    expect(() =>
+      validateEnv({
+        ...requiredVariables,
+        SHUTDOWN_DRAIN_DELAY_MS: '30000',
+        SHUTDOWN_TIMEOUT_MS: '25000',
+      }),
+    ).toThrow(/SHUTDOWN_DRAIN_DELAY_MS/);
+  });
+
   it('throws a readable error listing every invalid variable', () => {
     const error = captureError(() =>
       validateEnv({ ...requiredVariables, HTTP_PORT: 'not-a-port', LOG_LEVEL: 'verbose' }),

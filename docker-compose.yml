@@ -11,6 +11,8 @@ x-app: &app
     target: runtime
   image: location-tracking-service:local
   init: true # forwards SIGTERM to Node and reaps zombie processes
+  # Docker's default (10 s) is shorter than the drain delay plus a slow close; SHUTDOWN_TIMEOUT_MS is 25 s.
+  stop_grace_period: 30s
   restart: unless-stopped
   profiles: ['app']
   environment: &app-env

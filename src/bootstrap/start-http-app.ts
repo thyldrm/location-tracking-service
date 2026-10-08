@@ -3,7 +3,9 @@ import { NestFactory } from '@nestjs/core';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Logger } from 'nestjs-pino';
 import type { Env } from '../core/config/env.schema.js';
+import { ProcessLifecycle } from '../core/lifecycle/process-lifecycle.js';
 import { createFastifyAdapter } from './create-fastify-adapter.js';
+import { gracefulShutdown } from './graceful-shutdown.js';
 
 export type ProcessRole = 'api' | 'worker';
 
@@ -36,12 +38,20 @@ export async function startHttpApp(
   app.useLogger(logger);
   app.flushLogs();
 
-  // Translates SIGTERM/SIGINT into Nest lifecycle hooks (onModuleDestroy, beforeApplicationShutdown, ...).
-  app.enableShutdownHooks();
-
   const port = resolveHttpPort(role, env);
   await app.listen(port, env.HTTP_HOST);
   logger.log(`${role} role listening on http://${env.HTTP_HOST}:${port}`, 'Bootstrap');
+
+  // Instead of Nest's enableShutdownHooks, which closes at once: drain first (see gracefulShutdown).
+  const shutdown = gracefulShutdown(app, app.get(ProcessLifecycle), {
+    timeoutMs: env.SHUTDOWN_TIMEOUT_MS,
+    logger,
+    exit: (code) => process.exit(code),
+  });
+  // SIGTERM comes from the orchestrator, which still routes traffic to the process for a moment.
+  process.once('SIGTERM', () => void shutdown('SIGTERM', env.SHUTDOWN_DRAIN_DELAY_MS));
+  // Ctrl+C on a developer machine: nothing routes traffic here, close at once.
+  process.once('SIGINT', () => void shutdown('SIGINT', 0));
 
   return app;
 }
