@@ -21,16 +21,21 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
-    "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:integration": "vitest run --config ./vitest.config.integration.ts",
+    "migration:run": "node dist/migrate.js run",
+    "migration:revert": "node dist/migrate.js revert"
   },
   "dependencies": {
     "@nestjs/common": "^12.1.2",
     "@nestjs/config": "^12.0.1",
     "@nestjs/core": "^12.1.2",
     "@nestjs/platform-fastify": "^12.1.2",
+    "@nestjs/typeorm": "^12.0.2",
+    "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "typeorm": "^1.1.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -39,7 +44,10 @@
     "@nestjs/cli": "^12.0.8",
     "@nestjs/schematics": "^12.0.6",
     "@nestjs/testing": "^12.1.2",
+    "@testcontainers/postgresql": "^12.2.0",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^24.19.1",
+    "@types/pg": "^8.23.1",
     "@vitest/coverage-v8": "^4.1.11",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
@@ -57,5 +65,10 @@
     "*.{json,md,yml,yaml}": [
       "prettier --write"
     ]
+  },
+  "allowScripts": {
+    "cpu-features": false,
+    "protobufjs": false,
+    "ssh2": false
   }
 }

@@ -17,6 +17,18 @@ export const envSchema = z.object({
   HTTP_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   HTTP_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
   HTTP_TRUST_PROXY: booleanString.default(false),
+
+  // Credentials have no defaults on purpose: a deployment that forgets them must not start.
+  POSTGRES_HOST: z.string().min(1).default('localhost'),
+  POSTGRES_PORT: z.coerce.number().int().min(1).max(65_535).default(5432),
+  POSTGRES_USER: z.string().min(1),
+  POSTGRES_PASSWORD: z.string().min(1),
+  POSTGRES_DB: z.string().min(1),
+  POSTGRES_SSL: booleanString.default(false),
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
+  DB_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

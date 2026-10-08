@@ -1,14 +1,14 @@
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import { ApiModule } from '../src/api.module.js';
-import { validateEnv } from '../src/core/config/env.schema.js';
+import { testEnv } from './support/test-env.js';
 
 describe('Health (e2e)', () => {
   let app: NestFastifyApplication;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ApiModule.forRoot(validateEnv({ NODE_ENV: 'test' }))],
+      imports: [ApiModule.forRoot(testEnv())],
     }).compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
@@ -20,7 +20,7 @@ describe('Health (e2e)', () => {
     await app.close();
   });
 
-  it('GET /health/live returns 200 without touching dependencies', async () => {
+  it('GET /health/live returns 200', async () => {
     const response = await app.inject({ method: 'GET', url: '/health/live' });
 
     expect(response.statusCode).toBe(200);
