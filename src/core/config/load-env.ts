@@ -8,8 +8,21 @@ import { validateEnv, type Env } from './env.schema.js';
  * real environment take precedence, which is what container orchestrators rely on.
  */
 export function loadEnv(envFilePath = '.env'): Env {
-  if (existsSync(envFilePath)) {
+  const envFileExists = existsSync(envFilePath);
+  if (envFileExists) {
     process.loadEnvFile(envFilePath);
   }
-  return validateEnv(process.env);
+
+  try {
+    return validateEnv(process.env);
+  } catch (error) {
+    if (!envFileExists && error instanceof Error) {
+      throw new Error(
+        `${error.message}\n\nNo ${envFilePath} file was found. ` +
+          'For local development, copy .env.example to .env.',
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
