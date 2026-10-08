@@ -12,8 +12,10 @@ import { IdGenerator } from '../../core/foundation/id-generator.js';
 import { MessageProducer, PublishError } from '../../core/messaging/message-producer.js';
 import { Topics } from '../../core/messaging/topics.js';
 import { Metrics } from '../../core/metrics/metrics.js';
+import { CircuitOpenError } from '../../core/resilience/circuit-breaker.js';
 import { RateLimiter, type RateLimitPolicy } from '../../core/rate-limit/rate-limiter.js';
 import type { LocationPingInput } from './location.schemas.js';
+import { PingPublishBreaker } from './ping-publish-breaker.js';
 import { PING_SCHEMA_VERSION, type PingMessage } from './ping-message.js';
 
 export type AcceptedPing = { pingId: string; status: 'accepted' };
@@ -36,6 +38,7 @@ export class LocationsService {
     private readonly clock: Clock,
     private readonly requestContext: RequestContext,
     private readonly metrics: Metrics,
+    private readonly breaker: PingPublishBreaker,
   ) {
     this.maxFutureSkewMs = config.get('PING_MAX_FUTURE_SKEW_MS', { infer: true });
     this.maxAgeMs = config.get('PING_MAX_AGE_MS', { infer: true });
@@ -70,17 +73,16 @@ export class LocationsService {
     };
 
     try {
-      // The key is the user id: all pings of a user land in one partition and are consumed in order.
-      await this.producer.publish(Topics.LocationPings, {
-        key: ping.userId,
-        value: JSON.stringify(message),
-        headers: {
-          'x-request-id': this.requestContext.correlationId ?? pingId,
-          'content-type': 'application/json',
-          'schema-version': String(PING_SCHEMA_VERSION),
-        },
-      });
+      await this.breaker.execute(() => this.publish(message));
     } catch (error) {
+      if (error instanceof CircuitOpenError) {
+        this.metrics.pingsRejected.inc({ reason: 'circuit-open' });
+        throw new ServiceUnavailableError(
+          'Location ingestion is temporarily unavailable. Retry the request.',
+          Math.max(1, Math.ceil(error.retryAfterMs / 1000)),
+          { cause: error },
+        );
+      }
       if (error instanceof PublishError) {
         this.metrics.pingsRejected.inc({ reason: 'unavailable' });
         // A full local queue clears quickly; an unreachable broker usually takes longer.
@@ -96,6 +98,19 @@ export class LocationsService {
 
     this.metrics.pingsAccepted.inc();
     return { pingId, status: 'accepted' };
+  }
+
+  private async publish(message: PingMessage): Promise<void> {
+    // The key is the user id: all pings of a user land in one partition and are consumed in order.
+    await this.producer.publish(Topics.LocationPings, {
+      key: message.userId,
+      value: JSON.stringify(message),
+      headers: {
+        'x-request-id': this.requestContext.correlationId ?? message.pingId,
+        'content-type': 'application/json',
+        'schema-version': String(PING_SCHEMA_VERSION),
+      },
+    });
   }
 
   /**

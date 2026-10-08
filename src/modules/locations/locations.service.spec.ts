@@ -1,5 +1,5 @@
 import type { ConfigService } from '@nestjs/config';
-import { Metrics, metricValue } from '../../core/metrics/metrics.js';
+import type { PinoLogger } from 'nestjs-pino';
 import type { Env } from '../../core/config/env.schema.js';
 import type { RequestContext } from '../../core/context/request-context.js';
 import {
@@ -13,12 +13,14 @@ import {
   PublishError,
 } from '../../core/messaging/message-producer.js';
 import type { Topic } from '../../core/messaging/topics.js';
+import { Metrics, metricValue } from '../../core/metrics/metrics.js';
 import {
   type RateLimitDecision,
   RateLimiter,
   type RateLimitPolicy,
 } from '../../core/rate-limit/rate-limiter.js';
 import { LocationsService } from './locations.service.js';
+import { PingPublishBreaker } from './ping-publish-breaker.js';
 
 const NOW = new Date('2026-10-08T12:00:00.000Z');
 const PING_ID = '0199b1a2-0000-7000-8000-0000000000aa';
@@ -28,14 +30,18 @@ const settings: Partial<Env> = {
   PING_MAX_AGE_MS: 86_400_000,
   RATE_LIMIT_PINGS_PER_WINDOW: 10,
   RATE_LIMIT_WINDOW_MS: 10_000,
+  KAFKA_BREAKER_FAILURE_THRESHOLD: 3,
+  KAFKA_BREAKER_OPEN_MS: 5_000,
 };
 const config = { get: (key: keyof Env) => settings[key] } as ConfigService<Env, true>;
 
 class RecordingProducer extends MessageProducer {
   readonly published: { topic: Topic; message: OutgoingMessage }[] = [];
   failure: PublishError | undefined;
+  attempts = 0;
 
   async publish(topic: Topic, message: OutgoingMessage): Promise<void> {
+    this.attempts++;
     if (this.failure) throw this.failure;
     this.published.push({ topic, message });
   }
@@ -55,6 +61,8 @@ class FixedRateLimiter extends RateLimiter {
   }
 }
 
+const silentLogger = { warn: () => undefined, info: () => undefined } as unknown as PinoLogger;
+
 function setup() {
   const metrics = new Metrics('test');
   const producer = new RecordingProducer();
@@ -67,6 +75,7 @@ function setup() {
     { now: () => NOW },
     { correlationId: 'request-7' } as RequestContext,
     metrics,
+    new PingPublishBreaker(config, { now: () => NOW }, metrics, silentLogger),
   );
   return { service, producer, rateLimiter, metrics };
 }
@@ -158,5 +167,21 @@ describe('LocationsService', () => {
     expect(error).toBeInstanceOf(ServiceUnavailableError);
     expect((error as ServiceUnavailableError).headers).toEqual({ 'retry-after': retryAfter });
     expect((error as ServiceUnavailableError).cause).toBe(producer.failure);
+  });
+
+  it('answers 503 at once, without calling Kafka, once the broker keeps timing out', async () => {
+    const { service, producer, metrics } = setup();
+    producer.failure = new PublishError('timeout');
+
+    for (let request = 0; request < 3; request++) {
+      await service.accept(ping(NOW)).catch(() => undefined);
+    }
+    const error: unknown = await service.accept(ping(NOW)).catch((caught: unknown) => caught);
+
+    expect(producer.attempts).toBe(3);
+    expect(error).toBeInstanceOf(ServiceUnavailableError);
+    expect((error as ServiceUnavailableError).headers).toEqual({ 'retry-after': '5' });
+    expect(await metricValue(metrics.pingsRejected, { reason: 'circuit-open' })).toBe(1);
+    expect(await metricValue(metrics.pingsRejected, { reason: 'unavailable' })).toBe(3);
   });
 });

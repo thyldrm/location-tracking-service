@@ -68,6 +68,10 @@ export const envSchema = z
     KAFKA_LINGER_MS: z.coerce.number().int().min(0).max(1_000).default(5),
     // Used when provisioning topics; production clusters use 3.
     KAFKA_REPLICATION_FACTOR: z.coerce.number().int().min(1).max(5).default(1),
+    // Circuit breaker of POST /locations: consecutive broker timeouts that open it, and how long it stays
+    // open (answering 503 at once) before one trial request is let through.
+    KAFKA_BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).max(1_000).default(5),
+    KAFKA_BREAKER_OPEN_MS: z.coerce.number().int().min(100).max(300_000).default(5_000),
 
     REDIS_URL: z.url({ protocol: /^rediss?$/ }).default('redis://localhost:6379'),
     // Redis is on the hot path; a slow Redis must not slow the API down (rate limiting fails open).
