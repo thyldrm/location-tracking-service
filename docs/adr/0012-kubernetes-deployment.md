@@ -89,6 +89,9 @@ Kubernetes 1.37, metrics-server 0.9.0, KEDA 2.21.0, the local overlay:
   s0-kafka-location-pings-v1 above target"). In a repeat with 19,000 pings waiting, one worker drained them in under
   7 s, before KEDA's next poll, and KEDA rightly kept one pod: lag-based scaling answers sustained backlogs, not
   short ones that one worker absorbs.
+- PostgreSQL scaled to zero, then the API restarted (`kubectl rollout restart`): the rollout completed, the new pod
+  was ready (reporting the database as down) and answered `/areas` with 503; once PostgreSQL was back it connected and
+  `/areas` answered 200, with no restart. Before the fix this rollout would have stalled with pods in a crash loop.
 - The smoke test recorded an entry after one or two pings.
 
 ## Not included
