@@ -346,7 +346,9 @@ describe('Worker: entry detection (e2e)', () => {
       sample(body, 'location_pings_dead_lettered_total', { reason: 'invalid-message' }),
     ).toBeGreaterThan(0);
     expect(sample(body, 'location_ping_processing_delay_seconds_count')).toBeGreaterThan(0);
-    expect(sample(body, 'area_index_areas')).toBe(2);
+    // At least the two areas of this file. The index also replays area.created events that earlier test
+    // files left in the topic (their rows were truncated since), depending on when its consumer joins.
+    expect(sample(body, 'area_index_areas')).toBeGreaterThanOrEqual(2);
     // Read from the table at scrape time.
     expect(sample(body, 'outbox_parked_events')).toBe(0);
     expect(sample(body, 'outbox_oldest_unpublished_age_seconds')).toBeGreaterThanOrEqual(0);
