@@ -8,14 +8,15 @@ import { ProblemDetailsFilter } from './errors/problem-details.filter.js';
 import { FoundationModule } from './foundation/foundation.module.js';
 import { LoggingModule, type LoggingModuleOptions } from './logging/logging.module.js';
 import { MessagingModule } from './messaging/messaging.module.js';
+import { MetricsModule } from './metrics/metrics.module.js';
 import { RedisModule } from './redis/redis.module.js';
 
 export type CoreModuleOptions = LoggingModuleOptions;
 
 /**
  * Cross-cutting infrastructure shared by every process role (API and worker): configuration,
- * time and id primitives, request context, structured logging, error responses, the database, the Kafka
- * producer and Redis.
+ * time and id primitives, request context, structured logging, metrics, error responses, the database, the
+ * Kafka producer and Redis.
  */
 @Module({})
 export class CoreModule {
@@ -27,6 +28,7 @@ export class CoreModule {
         FoundationModule,
         RequestContextModule,
         LoggingModule.forRoot(env, options),
+        MetricsModule.forRoot(options.role),
         DatabaseModule.forRoot(env),
         MessagingModule,
         RedisModule,
